@@ -1,4 +1,4 @@
-# SDVX Training Master
+# Training Master
 
 **English** | [简体中文](README.zh.md)
 
@@ -33,11 +33,11 @@ Open game then press `Insert`
 
 ## License
 
-Copyright (c) 2026 Takanashi Ryo. Project source is licensed under the [GNU General Public License v3.0 only](LICENSE) (GPL-3.0-only)
+Copyright (c) 2026 Takanashi Ryo. Licensed under the [GNU General Public License v3.0](LICENSE)
 
 ## 3rd Party
 
-- [Dear ImGui](https://github.com/ocornut/imgui)
+- [ImGui](https://github.com/ocornut/imgui)
 - [MinHook](https://github.com/tsudakageyu/minhook)
 
 ## AI

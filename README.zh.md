@@ -1,4 +1,4 @@
-# SDVX 训练大师
+# 训练大师
 
 [English](README.md) | **简体中文**
 
@@ -25,19 +25,19 @@
 | 播放倍率 | 将速度调整为 0.25x 至 1.00x，并提供预设按钮 |
 | 循环 | 标记 IN 和 OUT 点，持续循环或循环一次 |
 | 循环缓冲 | 设置选中循环区域前后增加的时间 |
-| 谱面预览 | 查看音符和旋钮轨迹，并编辑循环点 |
+| 谱面预览 | 查看Note和旋钮轨迹，并编辑循环点 |
 | 自动演奏 | 启用游戏原生自动演奏 |
 | 谱面流速 | 固定谱面流速 |
-| 镜头 | 在训练期间阻止镜头移动 |
+| 镜头 | 阻止镜头移动 |
 | 血条 | 覆盖血条类型和初始值 |
 
 ## 许可证
 
-版权所有 © 2026 Takanashi Ryo。项目源代码采用 [GNU 通用公共许可证第 3 版](LICENSE)（仅限 GPL-3.0）
+版权所有 © 2026 Takanashi Ryo。项目源代码采用 [GNU 通用公共许可证第 3 版](LICENSE)
 
 ## 第三方组件
 
-- [Dear ImGui](https://github.com/ocornut/imgui)
+- [ImGui](https://github.com/ocornut/imgui)
 - [MinHook](https://github.com/tsudakageyu/minhook)
 
 ## AI
