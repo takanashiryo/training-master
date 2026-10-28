@@ -1,0 +1,18 @@
+/build/
+/build-*/
+/dist/
+/scripts/
+# Local IDE settings and compiled artifacts
+.vs/
+CMakeUserPresets.json
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.dmp
+*.log
+imgui.ini
+__pycache__/
+*.py[cod]

@@ -1,0 +1,52 @@
+#include "native/profile.hpp"
+#include "game/autoplay_resolver.hpp"
+#include <MinHook.h>
+#include <iostream>
+#include <vector>
+#include <string_view>
+// Inspect a mapped image without resolving imports, executing game code or DllMain.
+void dummy() {}
+int wmain(int argc,wchar_t** argv) {
+    const bool require_autoplay=argc==3 && std::wstring_view(argv[2])==L"--require-autoplay";
+    if(argc!=2 && !require_autoplay) { std::wcerr<<L"Usage: training_verify.exe <soundvoltex.dll> [--require-autoplay]\n"; return 1; }
+    auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
+    if(!module) { std::cerr<<"Map failed: "<<GetLastError()<<'\n'; return 2; }
+    std::string reason;
+    if(!training::native::validate(module,reason)) { std::cerr<<reason<<'\n'; FreeLibrary(module); return 3; }
+    std::cout<<reason<<'\n';
+    std::cout<<"RTTI interface methods verified: "<<training::native::resolution().interface_methods<<'\n';
+    for (const auto& detail:training::native::resolution().details) std::cout<<detail<<'\n';
+    if(MH_Initialize()!=MH_OK) { FreeLibrary(module); return 4; }
+    using namespace training::native;
+    const auto& a=addresses();
+    const auto& w=world_layout();
+    std::cout<<"World layout: music="<<w.music<<", renderer="<<w.renderer
+        <<", forced_end="<<w.forced_end<<", gauge_types="<<w.gauge_types
+        <<", no_fail="<<w.no_fail<<", battle="<<w.battle<<'\n';
+    const auto& r=result_layout();
+    std::cout<<"Result layout: stride="<<r.stride<<", excluded="<<r.excluded
+        <<", tail_shift="<<r.tail_shift<<", fixed_timed_limit="<<r.fixed_timed_limit
+        <<", chart_gauge_gain="<<resolution().chart_gauge_gain<<'\n';
+    std::vector<std::uintptr_t> targets{a.world_update,a.world_destroy,a.collect_result,a.timer_update,a.audio_feed,a.request_next,a.serialize_result,a.can_continue,a.flow_decision,a.camera_update,a.lane_timing_constructor,a.hisp_update,a.hisp_event,a.gauge_hud_event,a.play_state};
+    const auto automatic=training::autoplay_discovery::resolve(module);
+    const auto base=reinterpret_cast<std::uintptr_t>(module);
+    if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&
+        automatic.layout.timer_vtable==base+a.game_timer_vtable) {
+        targets.push_back(automatic.layout.judge-base);
+        std::cout<<"Native AutoPlay discovered; AutoJudge RVA=0x"<<std::hex<<automatic.layout.judge-base<<std::dec<<'\n';
+    } else {
+        std::cout<<"Native AutoPlay unavailable: "<<(automatic?"training layout mismatch":automatic.error)<<'\n';
+        if (require_autoplay) { MH_Uninitialize(); FreeLibrary(module); return 6; }
+    }
+    bool ok=true;
+    for(auto rva:targets) {
+        auto* address=reinterpret_cast<void*>(reinterpret_cast<std::uintptr_t>(module)+rva);
+        void* original{};
+        const auto status=MH_CreateHook(address,reinterpret_cast<void*>(dummy),&original);
+        std::cout<<"RVA 0x"<<std::hex<<rva<<": "<<MH_StatusToString(status)<<'\n';
+        if(status!=MH_OK) ok=false; else MH_RemoveHook(address);
+    }
+    MH_Uninitialize(); FreeLibrary(module);
+    std::cout<<"No hooks enabled; no game code executed.\n";
+    return ok?0:5;
+}

@@ -1,0 +1,87 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-cross-release:
+    name: Linux / Windows x64 cross-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install LLVM MinGW
+        run: |
+          archive=llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64.tar.xz
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/$archive" \
+            "https://github.com/mstorsjo/llvm-mingw/releases/download/20261020/$archive"
+          echo "55064b60b991a1e1e8090b8c2f84e82b22cfe5903d12c159d65064cf5e8ae335  $RUNNER_TEMP/$archive" | sha256sum --check
+          tar -xf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Build Windows x64
+        run: bash build.sh
+
+      - name: Verify Windows DLL
+        run: |
+          llvm-readobj --file-headers build-linux-cross/trainingmaster.dll > "$RUNNER_TEMP/dll-headers.txt"
+          grep -q 'IMAGE_FILE_MACHINE_AMD64' "$RUNNER_TEMP/dll-headers.txt"
+          llvm-readobj --coff-imports build-linux-cross/trainingmaster.dll > "$RUNNER_TEMP/dll-imports.txt"
+          if grep -Ei 'Name: (libc\+\+|libunwind|libwinpthread).*\.dll' "$RUNNER_TEMP/dll-imports.txt"; then
+            echo 'The DLL unexpectedly depends on LLVM MinGW runtime DLLs.' >&2
+            exit 1
+          fi
+
+      - name: Set artifact date
+        id: build_date
+        run: echo "date=$(TZ=Asia/Hong_Kong date +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Install full runtime
+        run: cmake --install build-linux-cross --component Runtime --prefix dist/ci
+
+      - name: Verify and prepare packages
+        run: |
+          for file in trainingmaster.dll trainingmaster.ini training_preview.exe training_verify.exe \
+            README.md README.zh.md LICENSE licenses/imgui-LICENSE.txt licenses/minhook-LICENSE.txt \
+            licenses/stb-LICENSE.txt licenses/ProggyClean-LICENSE.txt \
+            licenses/LLVM-LICENSE.txt licenses/winpthreads-LICENSE.txt; do
+            test -f "dist/ci/$file" || { echo "Full package is missing $file" >&2; exit 1; }
+          done
+          mkdir -p dist/slim
+          cp dist/ci/trainingmaster.dll dist/ci/trainingmaster.ini dist/slim/
+
+      - name: Upload full runtime
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: training-master-${{ steps.build_date.outputs.date }}-full
+          path: dist/ci/
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload slim runtime
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: training-master-${{ steps.build_date.outputs.date }}
+          path: dist/slim/
+          if-no-files-found: error
+          retention-days: 14

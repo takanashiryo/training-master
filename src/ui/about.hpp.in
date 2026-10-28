@@ -1,0 +1,11 @@
+#pragma once
+#include <array>
+
+namespace training::about {
+inline constexpr char version[]="@PROJECT_VERSION@";
+struct License { const char* name; const char* text; };
+inline constexpr std::array<License,2> licenses{{
+    {"Dear ImGui",R"tmlicense(@TRAINING_IMGUI_LICENSE@)tmlicense"},
+    {"MinHook",R"tmlicense(@TRAINING_MINHOOK_LICENSE@)tmlicense"}
+}};
+}
