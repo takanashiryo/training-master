@@ -4,6 +4,9 @@
 
 训练大师是一款 SDVX 训练模组，提供多种练习功能
 
+> [!NOTE]  
+> 当前仅支持NABLA
+
 ## 下载
 
 前往 Actions 页面下载最新构建版本
@@ -13,17 +16,6 @@
 将 `trainingmaster.dll` 和 `trainingmaster.ini` 放入 contents 根目录或 modules 文件夹，然后使用 spice2x 注入
 
 启动游戏后按 `Insert` 打开界面
-
-## 构建
-
-在 Windows 上安装 CMake、Git 和包含 C++ 桌面开发组件的 Visual Studio 2026，
-然后运行 `build.bat`。DLL 输出到 `build/Release/trainingmaster.dll`。
-可通过 `BUILD_JOBS` 设置并行数。
-
-在 Linux 上安装 CMake、Ninja、Git 和 LLVM MinGW UCRT 工具链，将工具链的
-`bin` 目录加入 `PATH`，然后运行 `bash build.sh`。Windows x64 DLL 输出到
-`build-linux-cross/trainingmaster.dll`。可通过 `BUILD_JOBS` 设置并行数，或通过
-`LLVM_MINGW_ROOT` 指定工具链目录。
 
 ## 功能
 

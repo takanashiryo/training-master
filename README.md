@@ -4,6 +4,9 @@
 
 Training Master is a training mod for SDVX. Give you lot of training features
 
+> [!NOTE]  
+> Only support NABLA now
+
 ## Download
 
 Go Action page and download latest build
@@ -13,17 +16,6 @@ Go Action page and download latest build
 Put `trainingmaster.dll` and `trainingmaster.ini` into contents root or modules folder, then use spice2x to inject hook
 
 Open game then press `Insert`
-
-## Build
-
-On Windows, install CMake, Git and Visual Studio 2026 with the C++ desktop
-workload, then run `build.bat`. The DLL is written to
-`build/Release/trainingmaster.dll`. Set `BUILD_JOBS` to change parallelism.
-
-On Linux, install CMake, Ninja, Git and the LLVM MinGW UCRT toolchain, then add
-the toolchain's `bin` directory to `PATH` and run `bash build.sh`. The Windows
-x64 DLL is written to `build-linux-cross/trainingmaster.dll`. Set `BUILD_JOBS`
-to change parallelism, or set `LLVM_MINGW_ROOT` to the toolchain directory.
 
 ## Features
 
