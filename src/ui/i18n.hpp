@@ -38,7 +38,7 @@ inline constexpr Translation catalog[]{
     TM_TEXT("Artist","艺术家"),
     TM_TEXT("Difficulty","难度"),
     TM_TEXT("NO COVER","暂无封面"),
-    TM_TEXT("Enable training for this track","启用本曲训练"),
+    TM_TEXT("Enable training for this track","为本曲开启训练"),
     TM_TEXT("Use Finish Immediately to exit training.","请使用“立即结束”退出训练。"),
     TM_TEXT("Unavailable: unsupported mode or missing native context. Load plugin before selecting a song. Check log.","当前不可用：模式不受支持或缺少游戏上下文。请在选曲前加载插件，并检查日志。"),
     TM_TEXT("Transport","播放控制"),
