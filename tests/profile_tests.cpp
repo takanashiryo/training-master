@@ -85,7 +85,7 @@ struct Fixture {
         for (auto symbol:{Symbol::world_vtable,Symbol::draw_timer_vtable,Symbol::game_timer_vtable,
                           Symbol::fumen_data_vtable,Symbol::music_select_vtable,Symbol::alternative_scene_vtable,
                           Symbol::renderer_vtable,Symbol::camera_engine_vtable,Symbol::camera_world_vtable,Symbol::camera_space_vtable,
-                          Symbol::game_context_vtable,Symbol::fumen_player_vtable,Symbol::lane_range_vtable,Symbol::lane_button_vtable,Symbol::gauge_ref_vtable}) {
+                          Symbol::game_context_vtable,Symbol::fumen_player_vtable,Symbol::lane_range_vtable,Symbol::lane_button_vtable,Symbol::gauge_ref_vtable,Symbol::player_settings_vtable}) {
             const auto rva=symbols[static_cast<std::size_t>(symbol)];
             for (unsigned j=0;j<3;++j) put(image,rva+j*8,base+functions[j]);
         }
@@ -108,6 +108,7 @@ struct Fixture {
         rtti(".?AVGameTimer@Game@@",0,{{Symbol::timer_update,7}},Symbol::game_timer_vtable);
         rtti(".?AVCBaseScene@@",0,{{Symbol::request_next,11}});
         rtti(".?AVCStageResultGameData@@",0,{{Symbol::serialize_result,14}});
+        rtti(".?AVCPlayerSettingGameData@@",0,{},Symbol::player_settings_vtable);
         rtti(".?AVCameraUpdater@Game@@",8,{{Symbol::camera_update,1}});
         rtti(".?AVHispUpdater@Game@@",0,{{Symbol::hisp_update,1}});
         rtti(".?AVHispUpdater@Game@@",8,{{Symbol::hisp_event,1}});

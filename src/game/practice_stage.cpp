@@ -41,6 +41,23 @@ PracticeStageRecord::PracticeStageRecord(unsigned ordinal,unsigned music,unsigne
     at<unsigned>(p,layout.field(868))=8;
     for (unsigned i=0;i<3;++i) at<unsigned>(p,layout.field(872)+276*i)=5;
 }
+bool remember_practice_selection(std::uintptr_t image,std::uintptr_t world) {
+    __try {
+        const auto& a=native::addresses();
+        if (!image || !world || !a.player_settings || !a.player_settings_vtable ||
+            at<std::uintptr_t>(world,0)!=image+a.world_vtable) return false;
+        const auto settings=at<std::uintptr_t>(image,a.player_settings);
+        if (!settings || at<std::uintptr_t>(settings,0)!=image+a.player_settings_vtable) return false;
+        const auto music=at<unsigned>(world,native::world_layout().music);
+        const auto difficulty=at<unsigned>(world,native::world_layout().music+4);
+        // The native result collector writes last_music_id here and maps the
+        // difficulty to 1..5, or 0 for any other value. These are UI settings,
+        // not score, reward, or result records.
+        at<unsigned>(settings,44)=music;
+        at<unsigned>(settings,48)=difficulty>=1 && difficulty<=5?difficulty:0;
+        return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool is_practice_stage(std::uintptr_t record) {
     const auto& layout=native::result_layout();
     return at<unsigned>(record,layout.tag)==practice_stage_tag &&

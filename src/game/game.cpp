@@ -428,6 +428,8 @@ bool __fastcall collect_hook(Ptr world) {
                 log("Practice stage bookkeeping failed; score collection remains blocked");
                 return false;
             }
+            if (!remember_practice_selection(image,world))
+                log("Practice selection memory unavailable; score collection remains blocked");
             consumed_worlds.insert(world);
             log("Practice consumed stage "+std::to_string(field<int>(data,32))+"; no scored result collected");
         }

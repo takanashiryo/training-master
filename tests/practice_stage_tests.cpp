@@ -141,6 +141,28 @@ int wmain(int argc,wchar_t** argv) {
         alignas(8) std::array<std::byte,1664> world{};
         const Ptr world_address=reinterpret_cast<Ptr>(world.data());
         at<Ptr>(world_address,0)=image+training::native::addresses().world_vtable;
+        // The native selection UI reads PlayerSetting +44/+48 after scene recreation.
+        // Emulate a prior selection and a different training song using the exact
+        // resolved global and the game's validated primary vtable.
+        alignas(8) std::array<std::byte,128> player_settings{};
+        const Ptr setting_address=reinterpret_cast<Ptr>(player_settings.data());
+        const Ptr setting_global=image+training::native::addresses().player_settings;
+        const Ptr old_setting=at<Ptr>(setting_global,0);
+        at<Ptr>(setting_global,0)=setting_address;
+        at<Ptr>(setting_address,0)=image+training::native::addresses().player_settings_vtable;
+        at<unsigned>(setting_address,44)=100; at<unsigned>(setting_address,48)=1;
+        at<unsigned>(world_address,training::native::world_layout().music)=5678;
+        at<unsigned>(world_address,training::native::world_layout().music+4)=4;
+        check(training::remember_practice_selection(image,world_address),"training exit must update native selection memory");
+        check(at<unsigned>(setting_address,44)==5678 && at<unsigned>(setting_address,48)==4,
+              "returning to song selection must retain the trained music and difficulty");
+        at<unsigned>(world_address,training::native::world_layout().music+4)=99;
+        check(training::remember_practice_selection(image,world_address) && at<unsigned>(setting_address,48)==0,
+              "invalid difficulty must use the native fallback");
+        at<Ptr>(setting_address,0)=0;
+        check(!training::remember_practice_selection(image,world_address) && at<unsigned>(setting_address,44)==5678,
+              "unexpected settings object must not be modified");
+        at<Ptr>(setting_global,0)=old_setting;
         at<std::uint8_t>(world_address,training::native::world_layout().demo+12)=at<std::uint8_t>(world_address,training::native::world_layout().demo+13)=at<std::uint8_t>(world_address,training::native::world_layout().no_fail)=1;
         check(training::supports_training_world(image,world_address),"Premium Time world flags must allow training");
         at<int>(image,training::native::addresses().game_mode)=3;

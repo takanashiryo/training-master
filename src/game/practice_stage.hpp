@@ -23,6 +23,7 @@ private:
     std::array<std::uintptr_t,11> sentinel_{};
     std::array<std::uintptr_t,16> buckets_{};
 };
+bool remember_practice_selection(std::uintptr_t image,std::uintptr_t world);
 bool is_practice_stage(std::uintptr_t record);
 bool append_practice_stage(std::uintptr_t image,std::uintptr_t data,const PracticeStageRecord& record);
 std::int64_t serialize_practice_safe(std::uintptr_t image,std::uintptr_t data,std::uintptr_t xml,NativeSerialize original);

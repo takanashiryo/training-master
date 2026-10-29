@@ -168,6 +168,7 @@ constexpr RttiInterface interfaces[]={
     {".?AVGameTimer@Game@@",0,timer_methods,Symbol::game_timer_vtable},
     {".?AVCBaseScene@@",0,scene_methods},
     {".?AVCStageResultGameData@@",0,result_methods},
+    {".?AVCPlayerSettingGameData@@",0,{},Symbol::player_settings_vtable},
     {".?AVCameraUpdater@Game@@",8,camera_methods},
     {".?AVHispUpdater@Game@@",0,hisp_methods},
     {".?AVHispUpdater@Game@@",8,hisp_events},
@@ -372,7 +373,7 @@ bool resolve_family(const Image& image,const RttiBindings& bindings,
             }
             const auto access=kinds[i]==Kind::Code?Access::Code:kinds[i]==Kind::Writable?Access::Writable:Access::ReadOnly;
             const auto slots=kinds[i]==Kind::Vtable?3u:kinds[i]==Kind::Vtable2?2u:0u;
-            const auto size=slots?slots*8u:static_cast<Symbol>(i)==Symbol::matching?8u:4u;
+            const auto size=slots?slots*8u:(static_cast<Symbol>(i)==Symbol::matching || static_cast<Symbol>(i)==Symbol::player_settings)?8u:4u;
             if (!rva || !image.has(rva,size,access)) throw std::runtime_error(std::string(names[i])+": unresolved or invalid symbol");
             if (slots) {
                 if (rva%8) throw std::runtime_error(std::string(names[i])+": unaligned vtable");

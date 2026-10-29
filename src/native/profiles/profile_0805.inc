@@ -177,13 +177,13 @@ static constexpr Reference refs_collect_result[]={
     {6355,6359,Symbol::None,0,ReferenceKind::Relative32,Access::Code,64},
     {6371,6375,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,89},
     {6378,6382,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,20},
-    {6387,6391,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,90},
+    {6387,6391,Symbol::player_settings,0,ReferenceKind::Relative32,Access::Writable,90},
     {6392,6396,Symbol::None,0,ReferenceKind::Relative32,Access::Code,22},
     {6414,6418,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,89},
     {6421,6425,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,20},
     {6430,6434,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,90},
     {6435,6439,Symbol::None,0,ReferenceKind::Relative32,Access::Code,22},
-    {6451,6455,Symbol::None,0,ReferenceKind::Relative32,Access::Code,91},
+    {6451,6455,Symbol::selection_type_mapping,0,ReferenceKind::Relative32,Access::Code,91},
     {6470,6474,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,92},
     {6477,6481,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,20},
     {6486,6490,Symbol::None,0,ReferenceKind::Relative32,Access::Writable,93},
@@ -4989,6 +4989,18 @@ static constexpr char pattern_quiet_exit_state[]=
     "787506443840797436ba40380000488bc8e9????????488b15????????807a78007506807a79007416488b426080b81001000000740980bab80a0000007445c7442408020000"
     "00c644240c01488b44240848894164c34585c07513488b89680100004885c9741d488b0148ff6070c744240801000000c644240c01488b44240848894164c3"
     ;
+static constexpr Reference refs_selection_type_mapping[]={
+    {11,15,Symbol::None,0,ReferenceKind::Relative32,Access::ImageBase,35},
+    {19,23,Symbol::None,76,ReferenceKind::ImageRelative32,Access::Internal,1149},
+    {76,80,Symbol::None,68,ReferenceKind::ImageRelative32,Access::Internal,1150},
+    {80,84,Symbol::None,28,ReferenceKind::ImageRelative32,Access::Internal,1151},
+    {84,88,Symbol::None,36,ReferenceKind::ImageRelative32,Access::Internal,1152},
+    {88,92,Symbol::None,44,ReferenceKind::ImageRelative32,Access::Internal,1153},
+    {92,96,Symbol::None,52,ReferenceKind::ImageRelative32,Access::Internal,1154},
+    {96,100,Symbol::None,60,ReferenceKind::ImageRelative32,Access::Internal,1155},
+};
+static constexpr char pattern_selection_type_mapping[]=
+    "83fa05773f4863c24c8d05????????418b9480????????4903d0ffe2c7412801000000c3c7412802000000c3c7412803000000c3c7412804000000c3c7412805000000c3c7412800000000c3????????????????????????????????????????????????";
 static const Anchor anchors[]={
     {"player_finished",Symbol::player_finished,pattern_player_finished,{},{}},
     {"world_update",Symbol::world_update,pattern_world_update,refs_world_update,{}},
@@ -5070,4 +5082,5 @@ static const Anchor anchors[]={
     {"lane_button_constructor",Symbol::None,pattern_lane_button_constructor,refs_lane_button_constructor,{}},
     {"lane_button_render",Symbol::None,pattern_lane_button_render,refs_lane_button_render,{}},
     {"quiet_exit_state",Symbol::quiet_exit_state,pattern_quiet_exit_state,refs_quiet_exit_state,{}},
+    {"selection_type_mapping",Symbol::selection_type_mapping,pattern_selection_type_mapping,refs_selection_type_mapping,{}},
 };
