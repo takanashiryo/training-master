@@ -110,6 +110,8 @@ struct Fixture {
         rtti(".?AVCStageResultGameData@@",0,{{Symbol::serialize_result,14}});
         rtti(".?AVCPlayerSettingGameData@@",0,{},Symbol::player_settings_vtable);
         rtti(".?AVCameraUpdater@Game@@",8,{{Symbol::camera_update,1}});
+        rtti(".?AVGamePostEffectView@Game@@",8,{{Symbol::posteffect_event,1}});
+        rtti(".?AV?$_Func_impl_no_alloc@V<lambda_ab441f34bf477c931a8250d5bfec0a5a>@@_NM@std@@",0,{{Symbol::posteffect_shake,2}});
         rtti(".?AVHispUpdater@Game@@",0,{{Symbol::hisp_update,1}});
         rtti(".?AVHispUpdater@Game@@",8,{{Symbol::hisp_event,1}});
         rtti(".?AVGameHudView@Game@@",8,{{Symbol::gauge_hud_event,1}});
@@ -144,7 +146,7 @@ int main() {
         for(const auto& family:families()) {
             Fixture relocated(5,family);
             const auto result=relocated.resolve();
-            check(result.interface_methods==10,"all audited RTTI method contracts must bind");
+            check(result.interface_methods==12,"all audited RTTI method contracts must bind");
             check(result.world==family.world,"resolved ABI must carry its field layout");
             check(result.result==family.result && result.chart_gauge_gain==family.chart_gauge_gain,"resolved record/interface ABI differs");
             for(const auto& other:families()) if(&other!=&family) {

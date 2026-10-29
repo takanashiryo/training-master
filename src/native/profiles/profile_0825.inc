@@ -5093,6 +5093,42 @@ static constexpr Reference refs_selection_type_mapping[]={
 };
 static constexpr char pattern_selection_type_mapping[]=
     "83fa05773f4863c24c8d05????????418b9480????????4903d0ffe2c7412801000000c3c7412802000000c3c7412803000000c3c7412804000000c3c7412805000000c3c7412800000000c3????????????????????????????????????????????????";
+static constexpr Reference refs_posteffect_event[]={
+    {155,159,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1164},
+    {177,181,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1165},
+    {209,213,Symbol::None,0,ReferenceKind::Relative32,Access::ReadOnly,1166},
+    {219,223,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1167},
+    {311,315,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1168},
+    {369,373,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1169},
+    {518,522,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1170},
+    {525,529,Symbol::None,0,ReferenceKind::Relative32,Access::ReadOnly,1171},
+    {535,539,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1172},
+};
+static constexpr char pattern_posteffect_event[]=
+    "4055565741544155415641574883ec6048c7442420feffffff48899c24a80000004c8bf1488b4140483941380f84a50100004c8b3a4c8b6a084c89ac24a00000"
+    "004d3bfd0f848d010000418b0783f823745683f8280f85700100004180bf08010000270f8586010000498d570848630285c00f88530100004d8b4638488bc849"
+    "8b4640492bc048c1f804483bc10f86380100004803c9498b0cc8e8????????4981c710010000eb99498b5640498b4e38e8????????498b463849894640498b76"
+    "204d8b6628493bf40f84fd0000004c8d2d????????b908010000e8????????488bf848898424b0000000c7400801000000c7400c010000004c8928488d68104d"
+    "8b46180f57c0f30f7f442438498b4e104885c97408f0ff4108498b4e10498b4608488944243848894c24404c8bce488d542438488bcde8????????9048896c24"
+    "2848897c2430498b564049395648741748892a48897a080f57c0f30f7f4424284983464010eb0f4c8d442428498d4e38e8????????90488b4c24304885c97436"
+    "b8fffffffff00fc1410883f8017527488b7c2430488b07488bcfff10b8fffffffff00fc1470c83f801750b488b4c2430488b01ff50084883c640493bf40f8512"
+    "ffffff4c8bac24a00000004981c710010000e96afeffff488b9c24a80000004883c460415f415e415d415c5f5e5dc333c0488944244848894424504889442458"
+    "488d4c2448e8????????488d15????????488d4c2448e8????????cc";
+static constexpr Reference refs_posteffect_shake[]={
+    {41,45,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1173},
+    {49,53,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1174},
+    {62,66,Symbol::None,0,ReferenceKind::Relative32,Access::ReadOnly,1175},
+    {71,75,Symbol::None,0,ReferenceKind::Relative32,Access::ReadOnly,1176},
+    {76,80,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1173},
+    {84,88,Symbol::None,0,ReferenceKind::Relative32,Access::Code,1174},
+    {106,110,Symbol::None,0,ReferenceKind::Relative32,Access::ReadOnly,1175},
+    {118,122,Symbol::None,0,ReferenceKind::Relative32,Access::ReadOnly,1176},
+};
+static constexpr char pattern_posteffect_shake[]=
+    "48895c2418574883ec50f30f1002488bd90f29742440440f29442430f30f11442460440f294c2420e8????????488bc8e8????????440f28c0f3440f5905????"
+    "????f3440f5c05????????e8????????488bc8e8????????488b4b18488d542460440f28c8f3440f590d????????488b01f3440f5c0d????????ff5008488b4b"
+    "18488d5424680f28f0488b01ff5018f30f104c2460488b4b080f2f08488b01400f93c74084ff74090f57d2450f57c0eb0ef3440f59cef3440f59c6410f28d141"
+    "0f28c8ff5038488b5c2470400fb6c70f28742440440f28442430440f284c24204883c4505fc3";
 static const Anchor anchors[]={
     {"player_finished",Symbol::player_finished,pattern_player_finished,{},{}},
     {"world_update",Symbol::world_update,pattern_world_update,refs_world_update,{}},
@@ -5175,4 +5211,6 @@ static const Anchor anchors[]={
     {"lane_button_render",Symbol::None,pattern_lane_button_render,refs_lane_button_render,{}},
     {"quiet_exit_state",Symbol::quiet_exit_state,pattern_quiet_exit_state,refs_quiet_exit_state,{}},
     {"selection_type_mapping",Symbol::selection_type_mapping,pattern_selection_type_mapping,refs_selection_type_mapping,{}},
+    {"posteffect_event",Symbol::posteffect_event,pattern_posteffect_event,refs_posteffect_event,{}},
+    {"posteffect_shake",Symbol::posteffect_shake,pattern_posteffect_shake,refs_posteffect_shake,{}},
 };

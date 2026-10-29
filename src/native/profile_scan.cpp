@@ -159,6 +159,8 @@ constexpr RttiMethod timer_methods[]={{Symbol::timer_update,7}};
 constexpr RttiMethod scene_methods[]={{Symbol::request_next,11}};
 constexpr RttiMethod result_methods[]={{Symbol::serialize_result,14}};
 constexpr RttiMethod camera_methods[]={{Symbol::camera_update,1}};
+constexpr RttiMethod posteffect_methods[]={{Symbol::posteffect_event,1}};
+constexpr RttiMethod shake_methods[]={{Symbol::posteffect_shake,2}};
 constexpr RttiMethod hisp_methods[]={{Symbol::hisp_update,1}};
 constexpr RttiMethod hisp_events[]={{Symbol::hisp_event,1}};
 constexpr RttiMethod hud_events[]={{Symbol::gauge_hud_event,1}};
@@ -170,6 +172,8 @@ constexpr RttiInterface interfaces[]={
     {".?AVCStageResultGameData@@",0,result_methods},
     {".?AVCPlayerSettingGameData@@",0,{},Symbol::player_settings_vtable},
     {".?AVCameraUpdater@Game@@",8,camera_methods},
+    {".?AVGamePostEffectView@Game@@",8,posteffect_methods},
+    {".?AV?$_Func_impl_no_alloc@V<lambda_ab441f34bf477c931a8250d5bfec0a5a>@@_NM@std@@",0,shake_methods},
     {".?AVHispUpdater@Game@@",0,hisp_methods},
     {".?AVHispUpdater@Game@@",8,hisp_events},
     {".?AVGameHudView@Game@@",8,hud_events},

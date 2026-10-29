@@ -1,4 +1,7 @@
 #include "game/camera.hpp"
+#include "game/post_effect.hpp"
+#include <MinHook.h>
+#include <vector>
 #include "native/profile.hpp"
 #include <windows.h>
 #include <array>
@@ -52,6 +55,60 @@ struct Fixture {
         }
     }
 };
+struct FakeCurve { Ptr table; float start,end; };
+struct FakeLayer { Ptr table; float x{},y{}; };
+Ptr __fastcall fake_random_object() { return 1; }
+float __fastcall fake_random_value(Ptr) { return .75f; }
+float __fastcall fake_curve_value(Ptr,const float*) { return 20.f; }
+void* __fastcall fake_curve_start(Ptr p,void* output) {
+    float values[]{reinterpret_cast<FakeCurve*>(p)->start,20.f}; std::memcpy(output,values,8); return output;
+}
+void* __fastcall fake_curve_end(Ptr p,void* output) {
+    float values[]{reinterpret_cast<FakeCurve*>(p)->end,0.f}; std::memcpy(output,values,8); return output;
+}
+void __fastcall fake_layer_offset(Ptr p,float x,float y) { auto* l=reinterpret_cast<FakeLayer*>(p); l->x=x; l->y=y; }
+std::vector<unsigned> dispatched;
+Ptr __fastcall fake_post_event(Ptr,Ptr v) {
+    const auto* a=reinterpret_cast<const Ptr*>(v);
+    for(auto p=a[0];p<a[1];p+=272) dispatched.push_back(at<unsigned>(p,0));
+    return 1;
+}
+void post_event_policy() {
+    alignas(8) std::array<std::byte,272*5> events{};
+    const Ptr p=reinterpret_cast<Ptr>(events.data());
+    for(unsigned i=0;i<5;++i) at<unsigned>(p,i*272)=std::array<unsigned,5>{2,40,35,40,5}[i];
+    Ptr bounds[]{p,p+events.size(),p+events.size()};
+    dispatched.clear(); training::post_effect::dispatch(fake_post_event,0,reinterpret_cast<Ptr>(bounds),false);
+    check(dispatched==std::vector<unsigned>({2,40,35,40,5}),"normal playback must preserve every native event");
+    dispatched.clear(); training::post_effect::dispatch(fake_post_event,0,reinterpret_cast<Ptr>(bounds),true);
+    check(dispatched==std::vector<unsigned>({2,35,5}),"seeking must suppress post-effects but retain other events in order");
+}
+void native_shake_regression(Ptr image) {
+    using namespace training::post_effect;
+    const Ptr fn=image+training::native::addresses().posteffect_shake;
+    const Ptr rand_object=fn+45+at<std::int32_t>(fn,41);
+    const Ptr rand_value=fn+53+at<std::int32_t>(fn,49);
+    check(MH_Initialize()==MH_OK,"MinHook native shake test initialization");
+    void* unused{};
+    check(MH_CreateHook(reinterpret_cast<void*>(rand_object),reinterpret_cast<void*>(fake_random_object),&unused)==MH_OK,"random object hook");
+    check(MH_CreateHook(reinterpret_cast<void*>(rand_value),reinterpret_cast<void*>(fake_random_value),&unused)==MH_OK,"random value hook");
+    check(MH_EnableHook(MH_ALL_HOOKS)==MH_OK,"random substitute enable");
+    std::array<Ptr,4> curve_vtable{}; curve_vtable[1]=reinterpret_cast<Ptr>(fake_curve_value);
+    curve_vtable[2]=reinterpret_cast<Ptr>(fake_curve_start); curve_vtable[3]=reinterpret_cast<Ptr>(fake_curve_end);
+    std::array<Ptr,8> layer_vtable{}; layer_vtable[7]=reinterpret_cast<Ptr>(fake_layer_offset);
+    FakeCurve curve{reinterpret_cast<Ptr>(curve_vtable.data()),98.6f,99.1f};
+    FakeLayer layer{reinterpret_cast<Ptr>(layer_vtable.data())};
+    std::array<Ptr,5> callback{}; callback[1]=reinterpret_cast<Ptr>(&layer); callback[3]=reinterpret_cast<Ptr>(&curve);
+    const Ptr self=reinterpret_cast<Ptr>(callback.data()); const auto native=reinterpret_cast<ShakeUpdate>(fn);
+    float time=50.f;
+    check(!native(self,&time) && (layer.x!=0.f || layer.y!=0.f),"original callback must reproduce persistent shake before its start");
+    check(update_shake(native,self,&time,false) && layer.x==0.f && layer.y==0.f,
+          "rewinding before the shake start must reset offset and retire the native effect");
+    time=98.8f;
+    check(!update_shake(native,self,&time,false) && (layer.x!=0.f || layer.y!=0.f),"normal playback must keep the original shake");
+    check(update_shake(native,self,&time,true) && layer.x==0.f && layer.y==0.f,"seeking inside an active shake must reset it");
+    MH_Uninitialize();
+}
 bool compute(const Fixture& f) {
     __try {
         f.layout.rebuild(f.p); f.layout.rebuild(f.q);
@@ -140,7 +197,8 @@ int wmain(int argc,wchar_t** argv) {
                 reinterpret_cast<Rebuild>(base+a.camera_rebuild_space),reinterpret_cast<SetView>(base+a.camera_set_view),training::native::world_layout()};
         }
         run(layout);
-        if(module) native_descendant(layout);
+        post_event_policy();
+        if(module) { native_descendant(layout); native_shake_regression(reinterpret_cast<Ptr>(module)); }
         if(module) FreeLibrary(module);
         std::cout<<"240 animated frames, native matrix freeze/restore, seek, re-lock and graph guards passed\n";
         return 0;

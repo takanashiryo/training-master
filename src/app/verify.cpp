@@ -27,7 +27,7 @@ int wmain(int argc,wchar_t** argv) {
     std::cout<<"Result layout: stride="<<r.stride<<", excluded="<<r.excluded
         <<", tail_shift="<<r.tail_shift<<", fixed_timed_limit="<<r.fixed_timed_limit
         <<", chart_gauge_gain="<<resolution().chart_gauge_gain<<'\n';
-    std::vector<std::uintptr_t> targets{a.world_update,a.world_destroy,a.collect_result,a.timer_update,a.audio_feed,a.request_next,a.serialize_result,a.can_continue,a.flow_decision,a.camera_update,a.lane_timing_constructor,a.hisp_update,a.hisp_event,a.gauge_hud_event,a.play_state};
+    std::vector<std::uintptr_t> targets{a.world_update,a.world_destroy,a.collect_result,a.timer_update,a.audio_feed,a.request_next,a.serialize_result,a.can_continue,a.flow_decision,a.camera_update,a.lane_timing_constructor,a.hisp_update,a.hisp_event,a.gauge_hud_event,a.play_state,a.posteffect_event,a.posteffect_shake};
     const auto automatic=training::autoplay_discovery::resolve(module);
     const auto base=reinterpret_cast<std::uintptr_t>(module);
     if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&

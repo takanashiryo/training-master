@@ -7,6 +7,7 @@
 #include "platform/log.hpp"
 #include "game/autoplay.hpp"
 #include "game/camera.hpp"
+#include "game/post_effect.hpp"
 #include "game/lane_speed.hpp"
 #include "game/gauge.hpp"
 #include <MinHook.h>
@@ -46,6 +47,7 @@ bool camera_reported{};
 bool camera_updated{};
 MusicSelectRoute music_select_route;
 thread_local Ptr updating_world{};
+thread_local bool suppress_posteffects{};
 std::atomic<float> requested_rate{1.f};
 std::atomic<bool> feeder_seen{};
 std::atomic<bool> music_muted{};
@@ -61,6 +63,8 @@ using Collect=bool(__fastcall*)(Ptr);
 using Feed=std::uint32_t(__fastcall*)(Ptr,void*,std::uint32_t);
 using RequestNext=bool(__fastcall*)(Ptr,Ptr);
 Update original_world_update{}, original_destroy{}, original_timer_update{}, original_camera_update{};
+post_effect::EventHandler original_posteffect_event{};
+post_effect::ShakeUpdate original_posteffect_shake{};
 Collect original_collect{};
 Feed original_feed{};
 RequestNext original_request_next{};
@@ -98,6 +102,7 @@ bool transport_seek(Ptr world, float target,bool seek_audio=true) {
     __try {
         const auto timer=field<Ptr>(world,216);
         if (!timer || !std::isfinite(target)) return false;
+        if(updating_world==world && current_world==world) suppress_posteffects=true;
         float delta=target-position(timer);
         fn<void(__fastcall*)(Ptr,const float*)>(native::addresses().timer_seek)(timer,&delta);
         // The native seek notification invalidates DrawTimer. Commit before resetting notes.
@@ -277,6 +282,8 @@ void __fastcall world_update_hook(Ptr world) {
         stop_for_native_finish(world);
     }
     const auto previous=updating_world;
+    const bool previous_suppression=suppress_posteffects;
+    suppress_posteffects=false;
     updating_world=world;
     camera_updated=false;
     const auto control=session.snapshot();
@@ -286,6 +293,7 @@ void __fastcall world_update_hook(Ptr world) {
     if (active && world==current_world && autoplay_ready) autoplay::update(world,automatic,original_world_update);
     else original_world_update(world);
     updating_world=previous;
+    suppress_posteffects=previous_suppression;
     if (current_world==world) {
         if(lane_fault && !lane_reported) {
             lane_reported=true;
@@ -320,6 +328,22 @@ char __fastcall play_state_hook(Ptr world) {
 void __fastcall hud_event_hook(Ptr hud,Ptr events) {
     original_hud_event(hud,events);
     if(!gauge_control.after_events(hud,events)) log("Gauge HUD refresh failed");
+}
+bool suppress_posteffect_update(Ptr world) {
+    if (!world || world!=current_world) return false;
+    if (suppress_posteffects) return true;
+    if (!is_tainted(world)) return false;
+    const auto timer=field<Ptr>(world,216);
+    return timer && field<std::uint8_t>(timer,16)==0;
+}
+Ptr __fastcall posteffect_event_hook(Ptr effect,Ptr events) {
+    return post_effect::dispatch(original_posteffect_event,effect,events,suppress_posteffect_update(updating_world));
+}
+bool __fastcall posteffect_shake_hook(Ptr effect,const float* time) {
+    const auto world=updating_world;
+    if (!world || world!=current_world || (!suppress_posteffects && !is_tainted(world)))
+        return original_posteffect_shake(effect,time);
+    return post_effect::update_shake(original_posteffect_shake,effect,time,suppress_posteffect_update(world));
 }
 void __fastcall camera_update_hook(Ptr updater) {
     original_camera_update(updater);
@@ -541,6 +565,8 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         {native::addresses().audio_feed,reinterpret_cast<void*>(feed_hook),reinterpret_cast<void**>(&original_feed)},
         {native::addresses().request_next,reinterpret_cast<void*>(request_next_hook),reinterpret_cast<void**>(&original_request_next)},
         {native::addresses().camera_update,reinterpret_cast<void*>(camera_update_hook),reinterpret_cast<void**>(&original_camera_update)},
+        {a.posteffect_event,reinterpret_cast<void*>(posteffect_event_hook),reinterpret_cast<void**>(&original_posteffect_event)},
+        {a.posteffect_shake,reinterpret_cast<void*>(posteffect_shake_hook),reinterpret_cast<void**>(&original_posteffect_shake)},
         {a.lane_timing_constructor,reinterpret_cast<void*>(timing_constructor_hook),reinterpret_cast<void**>(&original_timing_constructor)},
         {a.hisp_update,reinterpret_cast<void*>(hisp_update_hook),reinterpret_cast<void**>(&original_hisp_update)},
         {a.play_state,reinterpret_cast<void*>(play_state_hook),reinterpret_cast<void**>(&original_play_state)},
