@@ -1,4 +1,5 @@
 #include "core/reverse_audio.hpp"
+#include "core/playback_rate.hpp"
 #include <windows.h>
 #include <mfapi.h>
 #include <mfidl.h>
@@ -92,7 +93,7 @@ void ReversePlayer::publish(Command value) {
 }
 void ReversePlayer::start(std::shared_ptr<const PcmClip> clip,double seconds,float rate,float gain) {
     if (!clip || clip->samples.empty()) return;
-    publish({std::move(clip),std::max(0.,seconds),std::clamp(rate,.25f,1.f),std::clamp(gain,0.f,1.f)});
+    publish({std::move(clip),std::max(0.,seconds),std::clamp(rate,min_playback_rate,max_playback_rate),std::clamp(gain,0.f,1.f)});
 }
 double ReversePlayer::position() const {
     const auto command=command_.load();
@@ -102,7 +103,7 @@ double ReversePlayer::position() const {
 }
 void ReversePlayer::seek(double seconds) { if (const auto c=command_.load()) { auto next=*c; next.seconds=std::max(0.,seconds); publish(std::move(next)); } }
 void ReversePlayer::pause(bool value) { if (const auto c=command_.load()) { auto next=*c; next.seconds=position(); next.paused=value; publish(std::move(next)); } }
-void ReversePlayer::rate(float value) { if (const auto c=command_.load()) { auto next=*c; next.seconds=position(); next.rate=std::clamp(value,.25f,1.f); publish(std::move(next)); } }
+void ReversePlayer::rate(float value) { if (const auto c=command_.load()) { auto next=*c; next.seconds=position(); next.rate=std::clamp(value,min_playback_rate,max_playback_rate); publish(std::move(next)); } }
 void ReversePlayer::stop() { command_.store(nullptr); }
 bool ReversePlayer::render(std::span<float> output) {
     const auto command=command_.load();

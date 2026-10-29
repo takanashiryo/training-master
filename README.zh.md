@@ -17,6 +17,15 @@
 
 启动游戏后按 `Insert` 打开界面
 
+如需在 Release 构建后自动部署，可先配置游戏 modules 目录：
+
+```powershell
+cmake -S . -B build -DTRAINING_DEPLOY_DIR="F:/游戏路径/contents/modules"
+cmake --build build --config Release
+```
+
+该设置保存在构建目录中；将 `TRAINING_DEPLOY_DIR` 设为空可关闭自动部署。目标目录必须包含 `soundvoltex.dll`，部署只复制 `trainingmaster.dll`。
+
 ## 功能
 
 | 功能 | 说明 |

@@ -2,6 +2,7 @@
 /build-*/
 /dist/
 /scripts/
+/docs/
 # Local IDE settings and compiled artifacts
 .vs/
 CMakeUserPresets.json

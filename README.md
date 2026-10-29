@@ -17,6 +17,15 @@ Put `trainingmaster.dll` and `trainingmaster.ini` into contents root or modules 
 
 Open game then press `Insert`
 
+For automatic deployment after a Release build, configure the game modules directory once:
+
+```powershell
+cmake -S . -B build -DTRAINING_DEPLOY_DIR="F:/path/to/contents/modules"
+cmake --build build --config Release
+```
+
+The setting is stored in the build directory. Set `TRAINING_DEPLOY_DIR` to an empty value to disable deployment. The destination must contain `soundvoltex.dll`; only `trainingmaster.dll` is copied.
+
 ## Features
 
 | Feature | Description |

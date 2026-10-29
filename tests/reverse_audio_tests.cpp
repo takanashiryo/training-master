@@ -39,6 +39,11 @@ int wmain(int argc,wchar_t** argv) {
         close(player.position(),1./44100,"half rate must move half as far");
         player.seek(4./44100); player.rate(.25f); player.render(out);
         close(player.position(),3./44100,"quarter rate must move quarter as far");
+        std::vector<float> two_frames(4);
+        player.start(clip,4./44100,2.f); player.render(two_frames);
+        check(two_frames==std::vector<float>({3,30,1,10}),"2x reverse start must advance two frames per output frame");
+        player.start(clip,4./44100,1.f); player.rate(2.f); player.render(two_frames);
+        check(two_frames==std::vector<float>({3,30,1,10}),"switching reverse rate to 2x must advance two frames per output frame");
         player.start(clip,4./44100,1,.5f); player.render(out); close(out[0],2,"song gain must be applied");
         player.stop(); check(!player.owns_bus() && !player.render(out),"stop must restore native bus");
         const auto root=std::filesystem::temp_directory_path();

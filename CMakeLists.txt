@@ -61,6 +61,18 @@ target_include_directories(training_camera PUBLIC src)
 target_compile_definitions(training_camera PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
 add_library(sdvx_training SHARED src/app/dllmain.cpp src/game/game.cpp src/game/game_policy.cpp src/native/profile.cpp src/native/profile_scan.cpp src/game/scene_transition.cpp src/game/practice_stage.cpp src/ui/overlay.cpp src/ui/chart_view.cpp src/platform/log.cpp)
 set_target_properties(sdvx_training PROPERTIES OUTPUT_NAME trainingmaster PREFIX "")
+set(TRAINING_DEPLOY_DIR "" CACHE PATH "Game modules directory for automatic Release DLL deployment (empty disables deployment)")
+if(TRAINING_DEPLOY_DIR)
+  set(training_deploy_command
+    "${CMAKE_COMMAND}"
+    "-DTRAINING_DEPLOY_SOURCE=$<TARGET_FILE:sdvx_training>"
+    "-DTRAINING_DEPLOY_DIR=${TRAINING_DEPLOY_DIR}"
+    "-DTRAINING_DEPLOY_CONFIG=$<CONFIG>"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/deploy.cmake")
+  add_custom_command(TARGET sdvx_training POST_BUILD COMMAND ${training_deploy_command} VERBATIM)
+  add_custom_target(training_deploy ALL COMMAND ${training_deploy_command}
+    DEPENDS sdvx_training COMMENT "Deploying Release DLL to the game modules directory" VERBATIM)
+endif()
 target_link_libraries(sdvx_training PRIVATE training_core training_song_info training_autoplay training_camera training_lane_speed training_gauge imgui minhook bcrypt)
 target_compile_definitions(sdvx_training PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 add_executable(training_preview WIN32 src/app/preview.cpp src/ui/overlay.cpp src/ui/chart_view.cpp src/platform/log.cpp)

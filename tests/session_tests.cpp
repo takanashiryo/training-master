@@ -53,6 +53,10 @@ int main() {
         check(s.snapshot().in==20 && s.snapshot().out==40,"reject inverted region");
         command(s,Action::SetRate,std::numeric_limits<float>::quiet_NaN()); tick(s,g,30);
         check(s.snapshot().rate==.5f,"reject NaN");
+        command(s,Action::SetRate,2.f); tick(s,g,30);
+        check(s.snapshot().rate==2.f && g.speed==2.f,"2x reaches the playback backend");
+        command(s,Action::SetRate,2.01f); tick(s,g,30);
+        check(s.snapshot().rate==2.f && g.speed==2.f,"rates above 2x must be rejected");
         command(s,Action::Disable); tick(s,g,30);
         check(!g.paused && g.speed==1 && s.suppress_result(),"disable restores transport, not eligibility");
         command(s,Action::Finish); tick(s,g,30); check(g.finished,"finish works after disable");

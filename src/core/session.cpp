@@ -1,4 +1,5 @@
 #include "core/session.hpp"
+#include "core/playback_rate.hpp"
 #include <algorithm>
 #include <cmath>
 #include <utility>
@@ -281,7 +282,7 @@ bool Session::apply(const Command& c, Backend& b) {
         else s.loop=s.repeat=false;
         break;
     case Action::SetRate:
-        if (c.value < .25f || c.value > 1.f) { s.message = "Rate must be between 0.25 and 1.00"; break; }
+        if (c.value < min_playback_rate || c.value > max_playback_rate) { s.message = "Rate must be between 0.25 and 2.00"; break; }
         if (!b.rate(c.value)) return false;
         s.rate = c.value; break;
     case Action::Restart:

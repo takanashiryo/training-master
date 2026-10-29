@@ -1,0 +1,16 @@
+if(NOT TRAINING_DEPLOY_CONFIG STREQUAL "Release")
+  return()
+endif()
+if(NOT EXISTS "${TRAINING_DEPLOY_SOURCE}")
+  message(FATAL_ERROR "Training Master DLL does not exist: ${TRAINING_DEPLOY_SOURCE}")
+endif()
+if(NOT IS_DIRECTORY "${TRAINING_DEPLOY_DIR}" OR NOT EXISTS "${TRAINING_DEPLOY_DIR}/soundvoltex.dll")
+  message(FATAL_ERROR "Game modules directory is missing or does not contain soundvoltex.dll: ${TRAINING_DEPLOY_DIR}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+  "${TRAINING_DEPLOY_SOURCE}" "${TRAINING_DEPLOY_DIR}/trainingmaster.dll"
+  RESULT_VARIABLE deploy_result ERROR_VARIABLE deploy_error)
+if(NOT deploy_result EQUAL 0)
+  message(FATAL_ERROR "Could not deploy trainingmaster.dll: ${deploy_error}")
+endif()
+message(STATUS "Training Master deployed to ${TRAINING_DEPLOY_DIR}/trainingmaster.dll")

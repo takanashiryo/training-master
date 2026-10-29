@@ -86,7 +86,7 @@ inline constexpr Translation catalog[]{
     TM_TEXT("IN must be at least 50 ms before OUT","IN 必须比 OUT 提前至少 50 毫秒"),
     TM_TEXT("OUT must follow IN and stay inside the track","OUT 必须晚于 IN，且位于曲目范围内"),
     TM_TEXT("Region must stay inside the track and be at least 50 ms long","选区必须位于曲目范围内，且长度不少于 50 毫秒"),
-    TM_TEXT("Rate must be between 0.25 and 1.00","倍率必须介于 0.25 与 1.00 之间"),
+    TM_TEXT("Rate must be between 0.25 and 2.00","倍率必须介于 0.25 与 2.00 之间"),
     TM_TEXT("Invalid game clock","游戏时钟无效"),
     TM_TEXT("Transport failed; paused. Results remain blocked. Use Finish Immediately.","播放控制失败，已暂停，成绩仍被阻止。请使用“立即结束”。"),
     TM_TEXT("Cannot inspect trainingmaster.ini","无法检查 trainingmaster.ini"),

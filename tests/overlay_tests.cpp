@@ -141,6 +141,12 @@ int main() {
               "camera checkbox must enable protected training");
         for(unsigned i=0;i<30 && session.snapshot().rewinding;++i) session.tick(session.snapshot().position,true,backend,.05f);
         session.submit({session.snapshot().generation,training::Action::Resume}); session.tick(0,true,backend);
+        const auto rate_controls=render(session);
+        for(const char* rate:{"0.50x","0.75x","1.00x","1.50x"})
+            check(rate_controls.find(rate)!=std::string::npos,"requested rate shortcut must be visible");
+        check(rate_controls.find("0.25x")==std::string::npos,"0.25x shortcut must be removed");
+        activate_transport(session,"1.50x"); session.tick(1,false,backend);
+        check(session.snapshot().rate==1.5f,"1.5x shortcut must set the playback rate");
         activate_transport(session,"Block camera movement"); session.tick(1,false,backend);
         check(!session.snapshot().camera_locked && session.suppress_result(),"camera checkbox must release view without restoring eligibility");
         activate_transport(session,"Enable training for this track"); session.tick(1,false,backend);

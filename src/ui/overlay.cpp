@@ -1,4 +1,5 @@
 #include "ui/overlay.hpp"
+#include "core/playback_rate.hpp"
 #include "platform/log.hpp"
 #include "ui/chart_view.hpp"
 #include "training_about.hpp"
@@ -766,12 +767,12 @@ void draw_controls(Session& session,const State& s) {
     if (transport_button("##transport-play","Play forward",TransportIcon::Play,!s.paused && !s.reversing)) send(Action::Resume);
     section("Playback rate");
     ImGui::SetNextItemWidth(-1);
-    if (ImGui::SliderFloat("##rate",&rate_value,.25f,1.f,"%.2fx")) send(Action::SetRate,rate_value);
+    if (ImGui::SliderFloat("##rate",&rate_value,min_playback_rate,max_playback_rate,"%.2fx")) send(Action::SetRate,rate_value);
     const float rate_width=std::max(40.f,(ImGui::GetContentRegionAvail().x-3*ImGui::GetStyle().ItemSpacing.x)/4);
-    for (const float rate:{.25f,.5f,.75f,1.f}) {
+    for (const float rate:{.5f,.75f,1.f,1.5f}) {
         char label[16]{}; sprintf_s(label,"%.2fx",rate);
         if (state_button(label,{rate_width,0},std::abs(rate_value-rate)<.001f)) { rate_value=rate; send(Action::SetRate,rate); }
-        if (rate<1.f) ImGui::SameLine();
+        if (rate<1.5f) ImGui::SameLine();
     }
     ImGui::EndDisabled();
     section("Setting");
