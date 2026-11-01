@@ -17,21 +17,12 @@ Put `trainingmaster.dll` and `trainingmaster.ini` into contents root or modules 
 
 Open game then press `Insert`
 
-For automatic deployment after a Release build, configure the game modules directory once:
-
-```powershell
-cmake -S . -B build -DTRAINING_DEPLOY_DIR="F:/path/to/contents/modules"
-cmake --build build --config Release
-```
-
-The setting is stored in the build directory. Set `TRAINING_DEPLOY_DIR` to an empty value to disable deployment. The destination must contain `soundvoltex.dll`; only `trainingmaster.dll` is copied.
-
 ## Features
 
 | Feature | Description |
 | --- | --- |
 | Playback controls | Seek, pause, resume, or play in reverse |
-| Playback rate | Adjust speed from 0.25x to 1.00x, with preset buttons |
+| Playback rate | Adjust speed from 0.25x to 2.00x, with preset buttons |
 | Looping | Mark IN and OUT points, repeat continuously, or loop once |
 | Loop buffer | Set the time added before and after the selected loop |
 | Chart view | View notes and lasers and edit loop points |
@@ -39,10 +30,6 @@ The setting is stored in the build directory. Set `TRAINING_DEPLOY_DIR` to an em
 | Lane speed | Lock lane speed |
 | Camera | Block camera movement during training |
 | Gauge | Override the gauge type and initial value |
-
-## License
-
-Copyright (c) 2026 Takanashi Ryo. Licensed under the [GNU General Public License v3.0](LICENSE)
 
 ## 3rd Party
 
@@ -53,3 +40,9 @@ Copyright (c) 2026 Takanashi Ryo. Licensed under the [GNU General Public License
 
 All code written and reversed by AI
 UI design by human
+
+## Plan
+
+- [ ] WebUI 
+- [ ] Judgement Dashboard 
+- [x] Playback Rate Upper To 2.0x

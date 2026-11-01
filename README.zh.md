@@ -17,21 +17,12 @@
 
 启动游戏后按 `Insert` 打开界面
 
-如需在 Release 构建后自动部署，可先配置游戏 modules 目录：
-
-```powershell
-cmake -S . -B build -DTRAINING_DEPLOY_DIR="F:/游戏路径/contents/modules"
-cmake --build build --config Release
-```
-
-该设置保存在构建目录中；将 `TRAINING_DEPLOY_DIR` 设为空可关闭自动部署。目标目录必须包含 `soundvoltex.dll`，部署只复制 `trainingmaster.dll`。
-
 ## 功能
 
 | 功能 | 说明 |
 | --- | --- |
 | 播放控制 | 定位、暂停、继续或倒放 |
-| 播放倍率 | 将速度调整为 0.25x 至 1.00x，并提供预设按钮 |
+| 播放倍率 | 将速度调整为 0.25x 至 2.00x，并提供预设按钮 |
 | 循环 | 标记 IN 和 OUT 点，持续循环或循环一次 |
 | 循环缓冲 | 设置选中循环区域前后增加的时间 |
 | 谱面预览 | 查看Note和旋钮轨迹，并编辑循环点 |
@@ -39,10 +30,6 @@ cmake --build build --config Release
 | 谱面流速 | 固定谱面流速 |
 | 镜头 | 阻止镜头移动 |
 | 血条 | 覆盖血条类型和初始值 |
-
-## 许可证
-
-版权所有 © 2026 Takanashi Ryo。项目源代码采用 [GNU 通用公共许可证第 3 版](LICENSE)
 
 ## 第三方组件
 
