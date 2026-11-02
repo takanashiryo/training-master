@@ -201,6 +201,11 @@ bool Session::apply(const Command& c, Backend& b) {
         s.message="Practice track: results and upload disabled";
         return true;
     }
+    if (c.action==Action::SetAutoplayMode) {
+        if(std::isfinite(c.value) && c.value>=0 && c.value<=2 && std::floor(c.value)==c.value)
+            s.autoplay_mode=static_cast<AutoplayMode>(static_cast<int>(c.value));
+        return true;
+    }
     if (c.action==Action::SetAutoplay) {
         if (!c.value) { s.autoplay=false; return true; }
         if (!s.ready || !s.track.autoplay_ready) { s.message="Native AutoPlay is unavailable for this track"; return true; }

@@ -780,6 +780,11 @@ void draw_settings(Session& session,const State& s) {
     bool automatic=s.autoplay;
     ImGui::BeginDisabled(!s.ready || !s.track.autoplay_ready);
     if (ImGui::Checkbox(i18n::label("AutoPlay"),&automatic)) send(Action::SetAutoplay,automatic?1.f:0.f);
+    ImGui::SameLine(); ImGui::SetNextItemWidth(-1.f);
+    int autoplay_mode=static_cast<int>(s.autoplay_mode);
+    const char* autoplay_modes[]={i18n::text("All"),i18n::text("Buttons only"),i18n::text("Knobs only")};
+    if(ImGui::Combo("##autoplay-mode",&autoplay_mode,autoplay_modes,3))
+        send(Action::SetAutoplayMode,static_cast<float>(autoplay_mode));
     ImGui::EndDisabled();
     bool lane_speed_locked=s.lane_speed_locked;
     ImGui::BeginDisabled(!s.ready || !s.track.lane_speed_ready);

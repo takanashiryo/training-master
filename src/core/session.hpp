@@ -1,5 +1,6 @@
 #pragma once
 #include "core/chart.hpp"
+#include "core/autoplay_mode.hpp"
 #include "core/gauge_types.hpp"
 #include "core/song_info.hpp"
 #include "core/reverse_audio.hpp"
@@ -39,11 +40,12 @@ struct State {
     float loop_before{1.f},loop_after{1.f};
     bool at_end{};
     bool finish_requested{};
+    AutoplayMode autoplay_mode{AutoplayMode::All};
 };
 struct LoopRange { float start{},end{}; };
 LoopRange loop_range(const State& state);
 float loop_gain(const State& state);
-enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop };
+enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode };
 struct Command { std::uint64_t generation; Action action; float value{}, end{}; };
 class Backend {
 public:

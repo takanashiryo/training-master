@@ -109,9 +109,17 @@ int main() {
         Track automatic{"test.vox",12,3,120.f}; automatic.autoplay_ready=true;
         s.begin(automatic,true);
         check(!s.snapshot().autoplay,"AutoPlay defaults off for each track");
+        command(s,Action::SetAutoplayMode,1); tick(s,g,0);
+        check(s.snapshot().autoplay_mode==AutoplayMode::Buttons && !s.snapshot().autoplay && !s.suppress_result(),
+              "choosing a mode alone must not enable AutoPlay or taint the track");
         command(s,Action::SetAutoplay,1); tick(s,g,1);
         check(s.snapshot().autoplay && s.snapshot().enabled && s.suppress_result(),
               "AutoPlay must enable training and block results before native override");
+        command(s,Action::SetAutoplayMode,2); tick(s,g,1);
+        check(s.snapshot().autoplay_mode==AutoplayMode::Knobs && s.snapshot().autoplay && s.suppress_result(),
+              "changing AutoPlay mode while enabled preserves result protection");
+        command(s,Action::SetAutoplayMode,std::numeric_limits<float>::quiet_NaN()); tick(s,g,1);
+        check(s.snapshot().autoplay_mode==AutoplayMode::Knobs,"invalid mode is ignored");
         command(s,Action::SetAutoplay,0); tick(s,g,2);
         check(!s.snapshot().autoplay && s.snapshot().enabled && s.suppress_result(),"AutoPlay off must not restore result eligibility");
         command(s,Action::SetAutoplay,1); command(s,Action::Disable); tick(s,g,3);

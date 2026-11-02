@@ -5,6 +5,7 @@
 namespace training::autoplay_discovery {
 struct Layout {
     std::uintptr_t update{}, draw{}, judge{};
+    std::uintptr_t note_gate{};
     std::uintptr_t judgment_event{}, judgment_gauge{}, judgment_color_option{};
     std::uintptr_t nemsys_vtable{}, nemsys_transform{}, nemsys_update{};
     std::uintptr_t button_bomb_vtable{}, button_bomb_update{};

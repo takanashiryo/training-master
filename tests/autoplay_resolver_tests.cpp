@@ -67,7 +67,11 @@ struct Fixture {
         sync_functions();
         // Method order deliberately differs from the game's current vtable slots.
         world_table=rtti(".?AVGameWorldKFC@Game@@",{load,update});
-        referee_table=rtti(".?AVNoteReferee@Game@@",{judge});
+        const auto gate=judge+0x200;
+        bytes(gate,{0x40,0x53,0x48,0x83,0xEC,0x20,0x48,0x8B,0xD9,0x48,0x8B,0x0A,0x48,0x8B,0x01,0xFF,0x50,0x38,
+            0x48,0xBA,0xB3,1,0,0,0,1,0,0,0x8B,0x01,0xFF,0xC8,0x83,0xF8,9,0x48,0x83,0xC1,0x28,0xC3});
+        functions.push_back({gate,gate+128,0}); sync_functions();
+        referee_table=rtti(".?AVNoteReferee@Game@@",{judge,gate});
         rtti(".?AVGameContext@Game@@",{clock}); rtti(".?AVGameTimer@Game@@",{clock});
     }
     ~Fixture() { VirtualFree(data,0,MEM_RELEASE); }
@@ -77,7 +81,8 @@ struct Fixture {
 bool exact(const Fixture& f, const training::autoplay_discovery::Result& r) {
     return r && r.layout.update==reinterpret_cast<std::uintptr_t>(f.data+f.update) &&
         r.layout.judge==reinterpret_cast<std::uintptr_t>(f.data+f.judge) && r.layout.context==f.ctx_offset &&
-        r.layout.flags==f.flags_offset && r.layout.timer==f.timer_offset;
+        r.layout.flags==f.flags_offset && r.layout.timer==f.timer_offset &&
+        r.layout.note_gate==reinterpret_cast<std::uintptr_t>(f.data+f.judge+0x200);
 }
 }
 
@@ -106,6 +111,13 @@ int main() {
     { Fixture f; f.put<std::uint32_t>(0x80+24+56,0xFFFF); // PE SizeOfImage ends before final section.
       check("truncated image rejected",!f.resolve()); }
     check("null module rejected",!training::autoplay_discovery::resolve(nullptr));
+    { Fixture f; f.data[f.judge+0x200+19]=0;
+      const auto r=f.resolve(); check("modified note gate disables selective dispatch",r && !r.layout.note_gate); }
+    { Fixture f; const auto copy=f.judge+0x400;
+      std::memcpy(f.data+copy,f.data+f.judge+0x200,128);
+      f.functions.push_back({copy,copy+128,0}); f.sync_functions();
+      f.put<std::uintptr_t>(f.referee_table+16,reinterpret_cast<std::uintptr_t>(f.data+copy));
+      const auto r=f.resolve(); check("ambiguous note gates disabled",r && !r.layout.note_gate); }
     std::printf("%u/%u passed\n",total-failed,total);
     return failed?1:0;
 }

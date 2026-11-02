@@ -178,6 +178,7 @@ int main() {
               playing.find("Repeat")==std::string::npos,"Transport must use one loop icon instead of Loop/Repeat checkboxes");
         check(!session.snapshot().autoplay && !session.snapshot().enabled && !session.suppress_result(),
               "displaying AutoPlay controls must not enable training, AutoPlay or taint the track");
+        check(playing.find("All")!=std::string::npos,"AutoPlay dropdown shows the default All mode");
         TransportBackend backend;
         activate_transport(session,"##transport-loop"); session.tick(0,false,backend);
         check(!session.snapshot().loop && !session.snapshot().repeat && !session.snapshot().enabled,

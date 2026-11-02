@@ -29,7 +29,7 @@ Open game then press `Insert`
 | Looping | Mark IN and OUT points, repeat continuously, or loop once |
 | Loop buffer | Set the time added before and after the selected loop |
 | Chart view | View notes and lasers and edit loop points |
-| AutoPlay | Enable native automatic play |
+| AutoPlay | Native automatic play: All, Buttons only, or Knobs only |
 | Lane speed | Lock lane speed |
 | Camera | Block camera movement during training |
 | Gauge | Override the gauge type and initial value |
@@ -49,5 +49,5 @@ UI design by human
 - [ ] WebUI 
 - [x] Judgement Counter 
 - [x] Playback Rate Upper To 2.0x
-- [ ] Autoplay can set separately for button or tsumami
+- [x] Autoplay can set separately for button or tsumami
 - [ ] Disable special chart showcase

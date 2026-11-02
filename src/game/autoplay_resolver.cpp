@@ -154,7 +154,7 @@ std::vector<std::uint32_t> matches(const Image& image, Function f, Pattern patte
     return result;
 }
 
-bool clean_entry(const Image& image, Function f) {
+bool clean_entry(const Image& image, Function f,unsigned prefix_length=16) {
     if (!f.end || f.end - f.begin < 16) return false;
     // Accept stack/register setup, never an existing jump, call, trap or return trampoline.
     const auto at = f.begin;
@@ -164,7 +164,7 @@ bool clean_entry(const Image& image, Function f) {
         (prefix >= 0x40 && prefix <= 0x4F && (opcode == 0x89 || opcode == 0x8B || opcode == 0x8D ||
         opcode == 0x81 || opcode == 0x83 || (opcode >= 0x50 && opcode <= 0x57)));
     if (!setup) return false;
-    for (auto p = at; p - at < 16;) {
+    for (auto p = at; p - at < prefix_length;) {
         unsigned char bytes[16]{};
         const auto available = (std::min)(std::uint32_t{15}, f.end - p);
         std::memcpy(bytes,image.base+p,available);
@@ -235,6 +235,21 @@ Result resolve_impl(HMODULE module) {
         }
     }
     if (judges != 1) return {{}, "AutoJudge structure missing, modified or ambiguous"};
+    // IsJudged runs before each note's manual/automatic dispatch AND follow
+    // update. Identify its note-ID lookup, FNV hash and 40-byte result walk.
+    unsigned gates=0;
+    for(auto method:image.methods(referee)) {
+        const auto f=image.function(method);
+        // The first legitimate virtual call starts at byte 15 in this leaf.
+        if(!clean_entry(image,f,15)) continue;
+        if(matches(image,f,{0x48,0x8B,0x0A,0x48,0x8B,0x01,0xFF,0x50,0x38}).size()==1 &&
+           matches(image,f,{0x48,0xBA,0xB3,1,0,0,0,1,0,0}).size()==1 &&
+           matches(image,f,{0x8B,0x01,0xFF,0xC8,0x83,0xF8,9}).size()==1 &&
+           matches(image,f,{0x48,0x83,0xC1,0x28}).size()==1) {
+            ++gates; layout.note_gate=reinterpret_cast<std::uintptr_t>(image.base+method);
+        }
+    }
+    if(gates!=1) layout.note_gate=0;
     for (auto method : image.methods(timer)) {
         if (!image.in_region(method,26,true)) continue;
         // Leaf clock accessor may have no .pdata entry. Verify its complete branch/return shape.

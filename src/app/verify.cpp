@@ -34,6 +34,10 @@ int wmain(int argc,wchar_t** argv) {
     if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&
         automatic.layout.timer_vtable==base+a.game_timer_vtable) {
         targets.push_back(automatic.layout.judge-base);
+        if(automatic.layout.note_gate) {
+            targets.push_back(automatic.layout.note_gate-base);
+            std::cout<<"AutoPlay note gate RVA=0x"<<std::hex<<automatic.layout.note_gate-base<<std::dec<<'\n';
+        } else if(require_autoplay) { std::cerr<<"AutoPlay note gate unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 16; }
         if(automatic.layout.draw) {
             targets.push_back(automatic.layout.draw-base);
             std::cout<<"GameWorld draw RVA=0x"<<std::hex<<automatic.layout.draw-base<<std::dec<<'\n';

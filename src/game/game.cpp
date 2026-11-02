@@ -93,6 +93,7 @@ NativeSerialize original_serialize{};
 NativeContinue original_continue{};
 NativeFlow original_flow{};
 autoplay::Judge original_judge{};
+autoplay::NoteGate original_note_gate{};
 using JudgmentEvent=Ptr(__fastcall*)(Ptr,Ptr,Ptr,Ptr,float);
 JudgmentEvent original_judgment_event{};
 bool autoplay_ready{};
@@ -341,7 +342,7 @@ void __fastcall world_update_hook(Ptr world) {
     const bool automatic=active && world==current_world && control.playing && control.enabled && control.autoplay &&
         !control.reversing && !control.rewinding && supported(world);
     if (automatic) mark_tainted(world);
-    if (active && world==current_world && autoplay_ready) autoplay::update(world,automatic,original_world_update);
+    if (active && world==current_world && autoplay_ready) autoplay::update(world,automatic,original_world_update,control.autoplay_mode);
     else original_world_update(world);
     if(active && current_world==world && s_critical_flag) {
         const auto value=field<std::uint8_t>(world,s_critical_flag);
@@ -503,6 +504,9 @@ Ptr __fastcall hisp_event_hook(Ptr updater,Ptr events) {
 }
 Ptr __fastcall judge_hook(Ptr referee,Ptr output,Ptr note,float time) {
     return autoplay::judge(original_judge,referee,output,note,time);
+}
+bool __fastcall note_gate_hook(Ptr referee,Ptr note) {
+    return autoplay::note_gate(original_note_gate,referee,note);
 }
 // The game's score callback receives the same 40-byte JudgeResult for manual
 // and automatic play. Never alter the record or the callback's return value.
@@ -690,7 +694,7 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         fn<gauge::Refresh>(a.gauge_hud_refresh),fn<gauge::Failed>(a.gauge_failed),
         native::world_layout(),native::resolution().chart_gauge_gain});
     log("Native Gauge switching and ARS stacks located");
-    autoplay_ready=discovered && discovered.layout.update==image+a.world_update &&
+    autoplay_ready=discovered && discovered.layout.note_gate && discovered.layout.update==image+a.world_update &&
         discovered.layout.world_vtable==image+a.world_vtable && discovered.layout.timer_vtable==image+a.game_timer_vtable;
     if (autoplay_ready) {
         autoplay::configure(discovered.layout);
@@ -762,6 +766,7 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
     if(knob_bomb_vtable && discovered.layout.knob_bomb_event)
         hooks.push_back({discovered.layout.knob_bomb_event-image,reinterpret_cast<void*>(knob_bomb_event_hook),reinterpret_cast<void**>(&original_knob_bomb_event)});
     if (autoplay_ready) hooks.push_back({discovered.layout.judge-image,reinterpret_cast<void*>(judge_hook),reinterpret_cast<void**>(&original_judge)});
+    if (autoplay_ready) hooks.push_back({discovered.layout.note_gate-image,reinterpret_cast<void*>(note_gate_hook),reinterpret_cast<void**>(&original_note_gate)});
     if (judgment_ready) hooks.push_back({discovered.layout.judgment_event-image,
         reinterpret_cast<void*>(judgment_event_hook),reinterpret_cast<void**>(&original_judgment_event)});
     std::vector<void*> created;
