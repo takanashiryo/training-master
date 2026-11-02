@@ -19,6 +19,9 @@ Open game then press `Insert`
 
 ## Features
 
+> [!NOTE]  
+> SCORES WILL NOT UPLOAD AND RECORD WHEN ENABLED
+
 | Feature | Description |
 | --- | --- |
 | Playback controls | Seek, pause, resume, or play in reverse |
@@ -46,3 +49,5 @@ UI design by human
 - [ ] WebUI 
 - [x] Judgement Counter 
 - [x] Playback Rate Upper To 2.0x
+- [ ] Autoplay can set separately for button or tsumami
+- [ ] Disable special chart showcase

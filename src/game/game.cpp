@@ -33,6 +33,22 @@ ReversePlayer reverse_player;
 std::shared_ptr<ReverseAsset> reverse_asset;
 bool reverse_reported{};
 camera::Controller camera_control;
+camera::NemsysController nemsys_control;
+camera::JudgeLineController judge_line_control;
+camera::CursorController cursor_control;
+camera::VisualController visual_control;
+using VisualUpdate=Ptr(__fastcall*)(Ptr);
+using VisualEvent=Ptr(__fastcall*)(Ptr,Ptr);
+void(__fastcall* original_nemsys_update)(Ptr){};
+VisualUpdate original_button_bomb_update{},original_knob_bomb_update{};
+VisualEvent original_knob_bomb_event{};
+Ptr button_bomb_vtable{},knob_bomb_vtable{},knob_bomb_primary_vtable{};
+camera::CursorEvent original_cursor_event{};
+Ptr cursor_vtable{};
+camera::JudgeLineUpdate original_judge_line_update{};
+Ptr judge_line_vtable{};
+camera::NemsysTransform original_nemsys_transform{};
+Ptr nemsys_vtable{};
 lane_speed::Controller lane_control;
 gauge::Controller gauge_control;
 bool lane_fault{},lane_reported{};
@@ -48,7 +64,7 @@ HudEvent original_hud_event{};
 bool camera_reported{};
 bool camera_updated{};
 MusicSelectRoute music_select_route;
-thread_local Ptr updating_world{};
+thread_local Ptr updating_world{}, drawing_world{};
 thread_local bool suppress_posteffects{};
 thread_local bool judgment_recording{}, judgment_seek{};
 thread_local float judgment_seek_target{};
@@ -68,6 +84,7 @@ using Collect=bool(__fastcall*)(Ptr);
 using Feed=std::uint32_t(__fastcall*)(Ptr,void*,std::uint32_t);
 using RequestNext=bool(__fastcall*)(Ptr,Ptr);
 Update original_world_update{}, original_destroy{}, original_timer_update{}, original_camera_update{};
+VisualUpdate original_world_draw{};
 post_effect::EventHandler original_posteffect_event{};
 post_effect::ShakeUpdate original_posteffect_shake{};
 Collect original_collect{};
@@ -273,7 +290,7 @@ void __fastcall world_update_hook(Ptr world) {
             camera_control.before_update(current_world);
             GameBackend old(current_world); session.end(old);
         }
-        camera_control.reset(); camera_reported=false;
+        camera_control.reset(); nemsys_control.reset(); judge_line_control.reset(); cursor_control.reset(); visual_control.reset(); camera_reported=false;
         lane_fault=lane_reported=false;
         current_world=world;
         autoplay::begin_track();
@@ -305,6 +322,7 @@ void __fastcall world_update_hook(Ptr world) {
         }
     }
     if (current_world==world) {
+        if(!session.camera_requested()) { cursor_control.reset(); visual_control.reset(); }
         if(!lane_control.before_update(world)) lane_fault=true;
         if (!camera_control.before_update(world) && !camera_reported) {
             camera_reported=true; session.camera_unavailable();
@@ -403,6 +421,70 @@ void __fastcall camera_update_hook(Ptr updater) {
         camera_reported=true; session.camera_unavailable();
         log("Camera pose capture failed; camera control disabled for this track");
     }
+}
+Ptr __fastcall world_draw_hook(Ptr world) {
+    camera::WorldScope scope(drawing_world,world);
+    return original_world_draw(world);
+}
+Ptr __fastcall nemsys_transform_hook(Ptr args,Ptr output) {
+    const auto world=camera::visual_world(updating_world,drawing_world);
+    const bool locked=world && world==current_world &&
+        field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+    return nemsys_control.transform(original_nemsys_transform,args,output,locked,nemsys_vtable);
+}
+double __fastcall judge_line_update_hook(Ptr view) {
+    const auto world=camera::visual_world(updating_world,drawing_world);
+    const bool locked=world && world==current_world &&
+        field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+    return judge_line_control.update(original_judge_line_update,view,locked,judge_line_vtable);
+}
+Ptr __fastcall cursor_event_hook(Ptr view,Ptr events) {
+    const auto world=camera::visual_world(updating_world,drawing_world);
+    const bool locked=world && world==current_world &&
+        field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+    const bool borrowed=locked && camera_control.before_cursor_event(world);
+    try {
+        const auto result=cursor_control.dispatch(original_cursor_event,view,events,locked,cursor_vtable);
+        if(borrowed && !camera_control.after_cursor_event(world) && !camera_reported) {
+            camera_reported=true; session.camera_unavailable();
+            log("Camera pose restore after cursor event failed; camera control disabled");
+        }
+        return result;
+    } catch(...) {
+        if(borrowed) camera_control.after_cursor_event(world);
+        throw;
+    }
+}
+struct VisualScope {
+    camera::VisualLease lease{};
+    bool borrowed{};
+    VisualScope(Ptr view,Ptr vtable,camera::VisualView kind) {
+        const auto world=camera::visual_world(updating_world,drawing_world);
+        const bool locked=world && world==current_world &&
+            field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+        borrowed=locked && visual_control.begin(view,vtable,kind,lease);
+    }
+    ~VisualScope() {
+        if(borrowed && !visual_control.end(lease)) {
+            try { log("Visual camera input restore failed"); } catch(...) {}
+        }
+    }
+};
+void __fastcall nemsys_update_hook(Ptr view) {
+    VisualScope scope(view,nemsys_vtable,camera::VisualView::Nemsys);
+    original_nemsys_update(view);
+}
+Ptr __fastcall button_bomb_update_hook(Ptr view) {
+    VisualScope scope(view,button_bomb_vtable,camera::VisualView::ButtonBomb);
+    return original_button_bomb_update(view);
+}
+Ptr __fastcall knob_bomb_update_hook(Ptr view) {
+    VisualScope scope(view,knob_bomb_primary_vtable,camera::VisualView::KnobBombUpdate);
+    return original_knob_bomb_update(view);
+}
+Ptr __fastcall knob_bomb_event_hook(Ptr view,Ptr events) {
+    VisualScope scope(view,knob_bomb_vtable,camera::VisualView::KnobBomb);
+    return original_knob_bomb_event(view,events);
 }
 Ptr __fastcall timing_constructor_hook(Ptr output,Ptr input,bool fixed) {
     return lane_control.construct_timing(original_timing_constructor,output,input,fixed);
@@ -621,6 +703,20 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         log("Native AutoPlay located; AutoJudge RVA="+std::to_string(discovered.layout.judge-image));
     } else log(std::string("Native AutoPlay unavailable; training remains available: ")+
                (discovered?"resolver disagrees with training world/timer":discovered.error));
+    nemsys_vtable=autoplay_ready?discovered.layout.nemsys_vtable:0;
+    if(!nemsys_vtable || !discovered.layout.nemsys_transform)
+        log("NEMSYS camera-follow control unavailable for this version");
+    judge_line_vtable=autoplay_ready?discovered.layout.judge_line_vtable:0;
+    if(!judge_line_vtable || !discovered.layout.judge_line_update)
+        log("Judge line camera-follow control unavailable for this version");
+    cursor_vtable=autoplay_ready?discovered.layout.cursor_vtable:0;
+    if(!cursor_vtable || !discovered.layout.cursor_event)
+        log("Cursor effect camera-follow control unavailable for this version");
+    button_bomb_vtable=autoplay_ready?discovered.layout.button_bomb_vtable:0;
+    knob_bomb_vtable=autoplay_ready?discovered.layout.knob_bomb_vtable:0;
+    knob_bomb_primary_vtable=autoplay_ready?discovered.layout.knob_bomb_primary_vtable:0;
+    if(!discovered.layout.nemsys_update || !button_bomb_vtable || !knob_bomb_vtable || !knob_bomb_primary_vtable)
+        log("Some gameplay visual camera-follow controls are unavailable for this version");
     judgment_color_option=autoplay_ready?discovered.layout.judgment_color_option:0;
     s_critical_flag=autoplay_ready && discovered.layout.s_critical_flag+4==native::world_layout().gauge_types?
         discovered.layout.s_critical_flag:0;
@@ -651,6 +747,26 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         {a.hisp_event,reinterpret_cast<void*>(hisp_event_hook),reinterpret_cast<void**>(&original_hisp_event)},
         {native::addresses().world_update,reinterpret_cast<void*>(world_update_hook),reinterpret_cast<void**>(&original_world_update)}
     };
+    if(autoplay_ready && discovered.layout.draw)
+        hooks.push_back({discovered.layout.draw-image,reinterpret_cast<void*>(world_draw_hook),reinterpret_cast<void**>(&original_world_draw)});
+    else log("Gameplay draw context unavailable; cursor camera-follow control may be incomplete");
+    if(nemsys_vtable && discovered.layout.nemsys_transform)
+        hooks.push_back({discovered.layout.nemsys_transform-image,reinterpret_cast<void*>(nemsys_transform_hook),
+            reinterpret_cast<void**>(&original_nemsys_transform)});
+    if(judge_line_vtable && discovered.layout.judge_line_update)
+        hooks.push_back({discovered.layout.judge_line_update-image,reinterpret_cast<void*>(judge_line_update_hook),
+            reinterpret_cast<void**>(&original_judge_line_update)});
+    if(cursor_vtable && discovered.layout.cursor_event)
+        hooks.push_back({discovered.layout.cursor_event-image,reinterpret_cast<void*>(cursor_event_hook),
+            reinterpret_cast<void**>(&original_cursor_event)});
+    if(nemsys_vtable && discovered.layout.nemsys_update)
+        hooks.push_back({discovered.layout.nemsys_update-image,reinterpret_cast<void*>(nemsys_update_hook),reinterpret_cast<void**>(&original_nemsys_update)});
+    if(button_bomb_vtable && discovered.layout.button_bomb_update)
+        hooks.push_back({discovered.layout.button_bomb_update-image,reinterpret_cast<void*>(button_bomb_update_hook),reinterpret_cast<void**>(&original_button_bomb_update)});
+    if(knob_bomb_primary_vtable && discovered.layout.knob_bomb_update)
+        hooks.push_back({discovered.layout.knob_bomb_update-image,reinterpret_cast<void*>(knob_bomb_update_hook),reinterpret_cast<void**>(&original_knob_bomb_update)});
+    if(knob_bomb_vtable && discovered.layout.knob_bomb_event)
+        hooks.push_back({discovered.layout.knob_bomb_event-image,reinterpret_cast<void*>(knob_bomb_event_hook),reinterpret_cast<void**>(&original_knob_bomb_event)});
     if (autoplay_ready) hooks.push_back({discovered.layout.judge-image,reinterpret_cast<void*>(judge_hook),reinterpret_cast<void**>(&original_judge)});
     if (judgment_ready) hooks.push_back({discovered.layout.judgment_event-image,
         reinterpret_cast<void*>(judgment_event_hook),reinterpret_cast<void**>(&original_judgment_event)});
@@ -659,6 +775,32 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         auto* address=reinterpret_cast<void*>(image+h.rva);
         const auto status=MH_CreateHook(address,h.detour,h.original);
         if (status!=MH_OK) {
+            if(discovered.layout.draw && h.rva==discovered.layout.draw-image) {
+                log(std::string("Gameplay draw context hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
+            if((nemsys_vtable && discovered.layout.nemsys_update && h.rva==discovered.layout.nemsys_update-image) ||
+               (button_bomb_vtable && h.rva==discovered.layout.button_bomb_update-image) ||
+               (knob_bomb_vtable && h.rva==discovered.layout.knob_bomb_event-image) ||
+               (knob_bomb_primary_vtable && h.rva==discovered.layout.knob_bomb_update-image)) {
+                log(std::string("Gameplay visual camera-follow hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
+            if(cursor_vtable && h.rva==discovered.layout.cursor_event-image) {
+                cursor_vtable=0;
+                log(std::string("Cursor effect camera-follow hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
+            if(judge_line_vtable && h.rva==discovered.layout.judge_line_update-image) {
+                judge_line_vtable=0;
+                log(std::string("Judge line camera-follow hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
+            if(nemsys_vtable && h.rva==discovered.layout.nemsys_transform-image) {
+                nemsys_vtable=0;
+                log(std::string("NEMSYS camera-follow hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
             if(judgment_ready && h.rva==discovered.layout.judgment_event-image) {
                 judgment::set_available(false);
                 log(std::string("Judgment counter hook unavailable: ")+MH_StatusToString(status));

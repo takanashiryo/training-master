@@ -32,7 +32,7 @@ inline constexpr Translation catalog[]{
     TM_TEXT("Loop buffer","循环缓冲"),
     TM_TEXT("Start buffer (s)","开始缓冲（秒）"),
     TM_TEXT("End buffer (s)","结束缓冲（秒）"),
-    TM_TEXT("0 = no buffer. Clamped to the track.","设为 0 关闭缓冲，范围限制在曲目内。"),
+    TM_TEXT("0 = no buffer. Clamped to the track.","设为 0 以关闭缓冲区，限制在选区内"),
     TM_TEXT("Overlay hotkey","界面快捷键"),
     TM_TEXT("Press a key... (Esc cancels)","请按下快捷键…（Esc 取消）"),
     TM_TEXT("Ctrl / Alt / Shift combinations supported.","支持 Ctrl / Alt / Shift 组合键。"),

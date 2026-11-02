@@ -89,7 +89,7 @@ struct Image {
     }
 
     // MSVC x64 TypeDescriptor -> complete-object locator -> primary vtable.
-    std::uint32_t vtable(const char* name) const {
+    std::uint32_t vtable(const char* name,std::uint32_t subobject_offset=0) const {
         std::vector<std::uint32_t> descriptors, locators, tables;
         const auto length = std::strlen(name) + 1;
         for (auto r : regions) if (!r.code && r.size >= length + 16) {
@@ -101,7 +101,7 @@ struct Image {
         for (auto r : regions) if (!r.code && r.size >= 24) {
             for (std::uint32_t i = 0; i <= r.size - 24; i += 4) {
                 const auto at = r.rva + i;
-                if (read<std::uint32_t>(at) == 1 && read<std::uint32_t>(at + 4) == 0 &&
+                if (read<std::uint32_t>(at) == 1 && read<std::uint32_t>(at + 4) == subobject_offset &&
                     read<std::uint32_t>(at + 8) == 0 && read<std::uint32_t>(at + 12) == descriptors[0] &&
                     in_region(read<std::uint32_t>(at + 16), 16, false) && read<std::uint32_t>(at + 20) == at)
                     locators.push_back(at);
@@ -210,6 +210,16 @@ Result resolve_impl(HMODULE module) {
             ++loads; layout.context = image.read<std::uint32_t>(ctx[0] + 3);
             layout.flags = image.base[flags[0] + 7];
         }
+    }
+    // GameWorld's separate draw method dispatches both component lists via
+    // virtual slot 2. DrawEvent listeners (including VOL cursors) run here,
+    // after the update hook has left its thread-local world scope.
+    if (image.in_region(world+32,8,false)) {
+        const auto draw=image.rva_of(image.read<std::uintptr_t>(world+32));
+        const auto f=image.function(draw);
+        const auto dispatch=matches(image,f,{0x48,0x8b,0x0b,0x48,0x8b,0x01,0xff,0x50,0x10,0x48,0x83,0xc3,0x10});
+        if(clean_entry(image,f) && dispatch.size()==2)
+            layout.draw=reinterpret_cast<std::uintptr_t>(image.base+draw);
     }
     if (updates != 1 || loads != 1) return {{}, "GameWorld update/MainLoad structure missing, modified or ambiguous"};
     if (!field(layout.context) || !field(layout.flags) || layout.flags >= 128 || !field(layout.timer) || layout.context == layout.timer)
@@ -323,6 +333,110 @@ Result resolve_impl(HMODULE module) {
         }
     }
     if(s_critical_matches!=1) layout.s_critical_flag=0;
+    // The NEMSYS view builds a 2D transform from two rotation sources and a
+    // horizontal offset independently of the 3D camera. Derive its helper
+    // from the RTTI-identified view update and verify its input ABI.
+    const auto nemsys=image.vtable(".?AVGameNemesysFrameView@Game@@");
+    if(nemsys && image.in_region(nemsys+8,8,false)) {
+        const auto update=image.rva_of(image.read<std::uintptr_t>(nemsys+8));
+        const auto f=image.function(update);
+        const auto layer_inputs=matches(image,f,{0x49,0x8b,0x47,0x48,0xf3,0x0f,0x10,0x48,0x10});
+        if(clean_entry(image,f) && layer_inputs.size()==3)
+            layout.nemsys_update=reinterpret_cast<std::uintptr_t>(image.base+update);
+        const auto calls=matches(image,f,{0x49,0x8b,0x47,0x38,0xf3,0x0f,0x10,0x48,0x04,
+            0xf3,0x0f,0x59,0x0d,-1,-1,-1,-1,0xf3,0x0f,0x11,0x4c,0x24,-1,
+            0x4c,0x89,0x7d,-1,0x48,0x8d,0x44,0x24,-1,0x48,0x89,0x45,-1,
+            0x48,0x8d,0x44,0x24,-1,0x48,0x89,0x45,-1,0x48,0x8d,0x55,-1,
+            0x48,0x8d,0x4d,-1,0xe8,-1,-1,-1,-1});
+        if(calls.size()==1) {
+            const auto target=rel(calls[0],54);
+            if(target>=0 && target<image.size) {
+                const auto helper=image.function(static_cast<std::uint32_t>(target));
+                const auto abi=matches(image,helper,{0x48,0x8b,0x01,0x48,0x8b,0x50,0x48,
+                    0xf3,0x0f,0x10,0x52,0x04,0xf3,0x0f,0x59,0x15,-1,-1,-1,-1,
+                    0x48,0x8d,0x55,-1,0x48,0x8d,0x4d,-1,0xff,0x15,-1,-1,-1,-1,
+                    0x0f,0x28,0x05,-1,-1,-1,-1,0x0f,0x11,0x45,-1,
+                    0x48,0xc7,0x45,-1,0,0,0,0,0x49,0x8b,0x06,0x48,0x8b,0x48,0x38,
+                    0xf3,0x0f,0x10,0x51,0x04});
+                if(clean_entry(image,helper) && abi.size()==1) {
+                    layout.nemsys_vtable=reinterpret_cast<std::uintptr_t>(image.base+nemsys);
+                    layout.nemsys_transform=reinterpret_cast<std::uintptr_t>(image.base+target);
+                }
+            }
+        }
+    }
+    // The separate JudgeLine view contains both the line and the front/base.
+    // Verify the exact three source fields read by its native transform.
+    const auto judge_line=image.vtable(".?AVGameJudgeLineView@Game@@");
+    if(judge_line && image.in_region(judge_line+8,8,false)) {
+        const auto update=image.rva_of(image.read<std::uintptr_t>(judge_line+8));
+        const auto f=image.function(update);
+        const auto horizontal=matches(image,f,{0x48,0x8b,0x46,0x60,0xf3,0x0f,0x10,0x30,
+            0xf3,0x0f,0x59,0x35,-1,-1,-1,-1});
+        const auto rotation=matches(image,f,{0x48,0x8b,0x46,0x70,0xf3,0x0f,0x10,0x50,0x04,
+            0xf3,0x0f,0x59,0x15,-1,-1,-1,-1,0x48,0x8d,0x55,-1,0x48,0x8d,0x4d,-1,
+            0xff,0x15,-1,-1,-1,-1,0x0f,0x28,0x05,-1,-1,-1,-1,0x0f,0x11,0x45,-1,
+            0x48,0xc7,0x45,-1,0,0,0,0,0x48,0x8b,0x46,0x60,0xf3,0x0f,0x10,0x50,0x04});
+        if(clean_entry(image,f) && horizontal.size()==1 && rotation.size()==1 && horizontal[0]<rotation[0]) {
+            layout.judge_line_vtable=reinterpret_cast<std::uintptr_t>(image.base+judge_line);
+            layout.judge_line_update=reinterpret_cast<std::uintptr_t>(image.base+update);
+        }
+    }
+    // Cursor events derive effect direction from three independent angle
+    // inputs before sampling the current camera world. Validate their ABI.
+    const auto cursor=image.vtable(".?AVTumamiCursorView@Game@@");
+    if(cursor && image.in_region(cursor+8,8,false)) {
+        const auto event=image.rva_of(image.read<std::uintptr_t>(cursor+8));
+        const auto f=image.function(event);
+        const auto rotation=matches(image,f,{0x48,0x8b,0x81,0xd0,0,0,0,0x4c,0x8b,0x81,0xe0,0,0,0,
+            0xf3,0x44,0x0f,0x10,0x58,0x08,0xf3,0x44,0x0f,0x58,0x58,0x04,
+            0xf3,0x45,0x0f,0x58,0x18,0xf3,0x44,0x0f,0x59,0x1d,-1,-1,-1,-1});
+        const auto camera=matches(image,f,{0x48,0x8b,0x49,0x08,0x48,0x8b,0x01,0x48,0x8d,0x55,-1,
+            0xff,0x50,0x18,0xf3,0x0f,0x10,0x30});
+        if(clean_entry(image,f) && rotation.size()==1 && camera.size()==1 && rotation[0]<camera[0]) {
+            layout.cursor_vtable=reinterpret_cast<std::uintptr_t>(image.base+cursor);
+            layout.cursor_event=reinterpret_cast<std::uintptr_t>(image.base+event);
+        }
+    }
+    // Both judgment effect views read the same live angle inputs outside the
+    // 3D camera matrices. Identify the methods via RTTI and their source ABI.
+    const auto button=image.vtable(".?AVGameJudgeBombView@Game@@");
+    if(button && image.in_region(button+8,8,false)) {
+        const auto update=image.rva_of(image.read<std::uintptr_t>(button+8));
+        const auto f=image.function(update);
+        const auto input=matches(image,f,{0x48,0x8b,0x85,0,1,0,0,0xf3,0x0f,0x10,0x70,8,
+            0xf3,0x0f,0x58,0x70,4,0xf3,0x41,0x0f,0x59,0xf3});
+        if(clean_entry(image,f) && input.size()==1) {
+            layout.button_bomb_vtable=reinterpret_cast<std::uintptr_t>(image.base+button);
+            layout.button_bomb_update=reinterpret_cast<std::uintptr_t>(image.base+update);
+        }
+    }
+    // Active VOL hit effects continue updating on the primary interface after
+    // their creation event. This method re-reads both live camera angles.
+    const auto knob_primary=image.vtable(".?AVGameJudgeTumamiBombView@Game@@");
+    if(knob_primary && image.in_region(knob_primary+8,8,false)) {
+        const auto update=image.rva_of(image.read<std::uintptr_t>(knob_primary+8));
+        const auto f=image.function(update);
+        const auto inputs=matches(image,f,{0x49,0x8b,0x87,0xd8,1,0,0,0x49,0x8b,0x97,0xe8,1,0,0,
+            0xf3,0x0f,0x10,0x48,8,0xf3,0x0f,0x58,0x48,4,0xf3,0x0f,0x58,0x0a});
+        if(clean_entry(image,f) && inputs.size()==1) {
+            layout.knob_bomb_primary_vtable=reinterpret_cast<std::uintptr_t>(image.base+knob_primary);
+            layout.knob_bomb_update=reinterpret_cast<std::uintptr_t>(image.base+update);
+        }
+    }
+    const auto knob=image.vtable(".?AVGameJudgeTumamiBombView@Game@@",8);
+    if(knob && image.in_region(knob+8,8,false)) {
+        const auto event=image.rva_of(image.read<std::uintptr_t>(knob+8));
+        const auto f=image.function(event);
+        const auto inputs=matches(image,f,{0x49,0x8b,0x95,0xd0,1,0,0,0x49,0x8b,0x85,0xe0,1,0,0,
+            0xf3,0x0f,0x10,0x4a,4,0xf3,0x0f,0x58,0x4a,8,0xf3,0x0f,0x58,8,0xf3,0x41,0x0f,0x59,0xca});
+        const auto single=matches(image,f,{0x49,0x8b,0x85,0xd0,1,0,0,0xf3,0x0f,0x10,0x48,4,
+            0xf3,0x0f,0x58,0x48,8,0xf3,0x41,0x0f,0x59,0xca});
+        if(clean_entry(image,f) && inputs.size()==3 && single.size()==2) {
+            layout.knob_bomb_vtable=reinterpret_cast<std::uintptr_t>(image.base+knob);
+            layout.knob_bomb_event=reinterpret_cast<std::uintptr_t>(image.base+event);
+        }
+    }
     return {layout, nullptr};
 }
 

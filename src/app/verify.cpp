@@ -34,6 +34,10 @@ int wmain(int argc,wchar_t** argv) {
     if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&
         automatic.layout.timer_vtable==base+a.game_timer_vtable) {
         targets.push_back(automatic.layout.judge-base);
+        if(automatic.layout.draw) {
+            targets.push_back(automatic.layout.draw-base);
+            std::cout<<"GameWorld draw RVA=0x"<<std::hex<<automatic.layout.draw-base<<std::dec<<'\n';
+        } else if(require_autoplay) { std::cerr<<"GameWorld draw unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 15; }
         if(automatic.layout.judgment_event && automatic.layout.judgment_gauge==base+a.gauge_update) {
             const auto code=reinterpret_cast<const unsigned char*>(automatic.layout.judgment_event);
             std::uintptr_t secondary{};
@@ -55,6 +59,28 @@ int wmain(int argc,wchar_t** argv) {
         if(automatic.layout.judgment_color_option)
             std::cout<<"EARLY/LATE color option RVA=0x"<<std::hex<<automatic.layout.judgment_color_option-base<<std::dec<<'\n';
         else if(require_autoplay) { std::cerr<<"EARLY/LATE color option unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 9; }
+        if(automatic.layout.nemsys_vtable && automatic.layout.nemsys_transform) {
+            targets.push_back(automatic.layout.nemsys_transform-base);
+            std::cout<<"NEMSYS transform RVA=0x"<<std::hex<<automatic.layout.nemsys_transform-base<<std::dec<<'\n';
+        }
+        else if(require_autoplay) { std::cerr<<"NEMSYS transform unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 11; }
+        if(automatic.layout.judge_line_vtable && automatic.layout.judge_line_update) {
+            targets.push_back(automatic.layout.judge_line_update-base);
+            std::cout<<"Judge line update RVA=0x"<<std::hex<<automatic.layout.judge_line_update-base<<std::dec<<'\n';
+        } else if(require_autoplay) { std::cerr<<"Judge line update unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 12; }
+        if(automatic.layout.cursor_vtable && automatic.layout.cursor_event) {
+            targets.push_back(automatic.layout.cursor_event-base);
+            std::cout<<"Cursor effect event RVA=0x"<<std::hex<<automatic.layout.cursor_event-base<<std::dec<<'\n';
+        } else if(require_autoplay) { std::cerr<<"Cursor effect event unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 13; }
+        if(automatic.layout.nemsys_update && automatic.layout.button_bomb_vtable && automatic.layout.button_bomb_update &&
+           automatic.layout.knob_bomb_vtable && automatic.layout.knob_bomb_event &&
+           automatic.layout.knob_bomb_primary_vtable && automatic.layout.knob_bomb_update) {
+            targets.push_back(automatic.layout.nemsys_update-base);
+            targets.push_back(automatic.layout.button_bomb_update-base);
+            targets.push_back(automatic.layout.knob_bomb_event-base);
+            targets.push_back(automatic.layout.knob_bomb_update-base);
+            std::cout<<"Complete gameplay visual hooks located\n";
+        } else if(require_autoplay) { std::cerr<<"Gameplay visual hook unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 14; }
         if(automatic.layout.s_critical_flag && automatic.layout.s_critical_flag+4==training::native::world_layout().gauge_types)
             std::cout<<"S-CRITICAL flag offset=0x"<<std::hex<<automatic.layout.s_critical_flag<<std::dec<<'\n';
         else if(require_autoplay) { std::cerr<<"S-CRITICAL flag unavailable or disagrees with world layout\n"; MH_Uninitialize(); FreeLibrary(module); return 10; }
