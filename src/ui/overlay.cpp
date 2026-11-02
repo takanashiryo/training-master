@@ -789,7 +789,6 @@ void draw_controls(Session& session,const State& s) {
     ImGui::BeginDisabled(!s.ready || !s.track.autoplay_ready);
     if (ImGui::Checkbox(i18n::label("AutoPlay"),&automatic)) send(Action::SetAutoplay,automatic?1.f:0.f);
     ImGui::EndDisabled();
-    ImGui::SameLine();
     bool lane_speed_locked=s.lane_speed_locked;
     ImGui::BeginDisabled(!s.ready || !s.track.lane_speed_ready);
     if (ImGui::Checkbox(i18n::label("Fix Lane Speed"),&lane_speed_locked)) send(Action::SetLaneSpeedLocked,lane_speed_locked?1.f:0.f);
