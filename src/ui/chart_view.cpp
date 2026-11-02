@@ -264,9 +264,9 @@ void draw_chart_preview(const State& s,Session* commands,float background_opacit
     const auto current=static_cast<unsigned>(std::clamp(std::floor((static_cast<float>(timing.position(s.position))-start)/view.measures),0.f,static_cast<float>(count-1)));
     const float column_x=current*column_width;
     float scroll=ImGui::GetScrollX(),desired=view.first_frame?0.f:scroll;
-    // Browsing and selection edits may defer following while the pointer is held,
-    // but only the user's Option preference can turn following off.
-    if (view.drag==RegionDrag::None && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && view.follow &&
+    // Paused browsing never moves the viewport; following resumes with playback.
+    // Selection edits may defer it while the pointer is held.
+    if (view.drag==RegionDrag::None && !ImGui::IsMouseDown(ImGuiMouseButton_Left) && view.follow && !s.paused &&
         (view.reset || column_x<scroll || column_x+column_width>scroll+visible)) desired=column_x;
     if (view.drag!=RegionDrag::None && ImGui::IsMouseDown(0)) {
         const auto mouse=ImGui::GetIO().MousePos;

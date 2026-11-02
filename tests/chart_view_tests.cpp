@@ -270,6 +270,18 @@ int main() {
         state.position=60; frame(state); frame(state);
         check(std::abs(window->Scroll.x-browsed)<1,"explicitly disabled follow must permit manual browsing");
         chart_preferences(3,true); frame(state); frame(state);
+        state.loop=true; state.in=50; state.out=70; state.paused=true;
+        click({bar.Max.x-4,(bar.Min.y+bar.Max.y)*.5f},state);
+        const float paused_scroll=window->Scroll.x;
+        check(paused_scroll>1000,"paused playback must allow browsing outside the loop selection");
+        state.position=5; frame(state); frame(state);
+        check(std::abs(window->Scroll.x-paused_scroll)<1,
+              "position changes must not override manual browsing while paused");
+        check(training::preferences().snapshot().follow_playback,
+              "paused browsing must not change the follow preference");
+        state.paused=false; frame(state); frame(state);
+        check(window->Scroll.x<4*168,"resuming playback must follow the playhead again");
+        state.loop=false;
         const auto* parent=ImGui::FindWindowByName("Chart test");
         const auto& style=ImGui::GetStyle();
         marker_y();
