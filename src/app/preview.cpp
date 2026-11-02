@@ -129,8 +129,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int) {
     const auto options=training::preferences().snapshot();
     session.set_loop_buffers(options.loop_before,options.loop_after);
     const auto chart=demo_chart();
-    training::Track track{"/data/music/preview/preview_4i.vox",1001,3,150.f,
-        static_cast<unsigned>(chart->notes.size()),static_cast<unsigned>(chart->lasers.size()),premium,chart,true};
+    training::Track track{"/data/music/preview/preview_4i.vox",1001,3,150.f};
+    track.native_quick_finish=premium; track.preview=chart; track.autoplay_ready=true;
     auto info=std::make_shared<training::SongInfo>();
     info->title="Training Preview / 練習用サンプル"; info->artist="Simulated track"; info->difficulty="INFINITE  Lv. 18.0";
     track.info=info;

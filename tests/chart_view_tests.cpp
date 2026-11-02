@@ -60,7 +60,7 @@ ImVec2 center_for_color(ImU32 color) {
 }
 void selection_scenarios(const std::shared_ptr<const training::Chart>& chart) {
     training::Session session; Game game;
-    session.begin({"test.vox",1,0,150,4,1,false,chart},true);
+    session.begin({"test.vox",1,0,150,false,chart},true);
     const auto generation=session.snapshot().generation;
     session.submit({generation,training::Action::Enable});
     session.submit({generation,training::Action::SetRegion,2,6});
@@ -123,7 +123,7 @@ void musical_pointer_scenarios() {
     chart->tempos={{0,120},{.25f,240},{1.875f,120}};
     chart->timing=training::MusicalTimeline::build(chart->measures,chart->beats,chart->tempos);
     training::Session session; Game game;
-    for(int i=0;i<10;++i) session.begin({"variable.vox",1,0,3.875f,0,0,false,chart},true);
+    for(int i=0;i<10;++i) session.begin({"variable.vox",1,0,3.875f,false,chart},true);
     const auto generation=session.snapshot().generation;
     session.submit({generation,training::Action::Enable});
     chart_preferences(3,false);
@@ -153,8 +153,8 @@ void musical_pointer_scenarios() {
 void mouse_mark_scenarios(const std::shared_ptr<const training::Chart>& chart) {
     training::Session session; Game game;
     // Use a fresh view generation after the preceding selection fixture.
-    session.begin({"test.vox",1,0,150,4,1,false,chart},true);
-    session.begin({"test.vox",1,0,150,4,1,false,chart},true);
+    session.begin({"test.vox",1,0,150,false,chart},true);
+    session.begin({"test.vox",1,0,150,false,chart},true);
     const auto generation=session.snapshot().generation;
     session.submit({generation,training::Action::Enable});
     session.submit({generation,training::Action::SetRegion,1,11});

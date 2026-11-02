@@ -231,6 +231,13 @@ public:
     }
     void music_gain(float gain) override { music_envelope_gain=gain; }
 };
+// Copy the native MSVC string; never pass its storage across the CRT boundary.
+std::string read_world_string(Ptr world,std::size_t offset) {
+    const auto length=field<std::size_t>(world,offset+16);
+    const char* data=field<std::size_t>(world,offset+24)>=16?
+        field<const char*>(world,offset):reinterpret_cast<const char*>(world+offset);
+    return data && length<4096?std::string(data,length):std::string{};
+}
 Track read_track(Ptr world) {
     Track t;
     t.autoplay_ready=autoplay_ready;
@@ -249,22 +256,14 @@ Track read_track(Ptr world) {
             __try { std::memcpy(target,reinterpret_cast<const void*>(source),size); return true; }
             __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
         });
-        if (t.preview->error.empty()) {
-            t.buttons=static_cast<std::uint32_t>(t.preview->notes.size());
-            t.lasers=static_cast<std::uint32_t>(t.preview->lasers.size());
-        } else log("Chart preview unavailable: "+t.preview->error);
+        if (!t.preview->error.empty()) log("Chart preview unavailable: "+t.preview->error);
     }
-    // Copy the selected ABI's MSVC strings; never pass them across the CRT boundary.
-    const auto length=field<std::size_t>(world,native::world_layout().chart_path+16);
-    const char* path=field<std::size_t>(world,native::world_layout().chart_path+24)>=16?
-        field<const char*>(world,native::world_layout().chart_path):reinterpret_cast<const char*>(world+native::world_layout().chart_path);
-    if (path && length<4096) t.chart.assign(path,length);
+    t.chart=read_world_string(world,native::world_layout().chart_path);
     t.info=song_catalog.lookup(t.music_id,t.difficulty,t.chart);
     // Native ThreadLoad selects the actual BGM path (including variants).
-    const auto audio_length=field<std::size_t>(world,native::world_layout().audio_path+16);
-    const char* audio_path=field<std::size_t>(world,native::world_layout().audio_path+24)>=16?field<const char*>(world,native::world_layout().audio_path):reinterpret_cast<const char*>(world+native::world_layout().audio_path);
-    if (audio_path && audio_length && audio_length<4096) {
-        const auto path_on_disk=reverse_audio_path(contents_root,std::string(audio_path,audio_length));
+    const auto audio_path=read_world_string(world,native::world_layout().audio_path);
+    if (!audio_path.empty()) {
+        const auto path_on_disk=reverse_audio_path(contents_root,audio_path);
         if (!path_on_disk.empty()) t.reverse_audio=std::make_shared<ReverseAsset>(path_on_disk);
     }
     reverse_asset=t.reverse_audio;
@@ -426,22 +425,23 @@ Ptr __fastcall world_draw_hook(Ptr world) {
     camera::WorldScope scope(drawing_world,world);
     return original_world_draw(world);
 }
+bool visual_camera_locked(Ptr world) {
+    return world && world==current_world && field<Ptr>(world,24)==image+native::addresses().play_state &&
+        session.camera_requested() && supported(world);
+}
 Ptr __fastcall nemsys_transform_hook(Ptr args,Ptr output) {
     const auto world=camera::visual_world(updating_world,drawing_world);
-    const bool locked=world && world==current_world &&
-        field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+    const bool locked=visual_camera_locked(world);
     return nemsys_control.transform(original_nemsys_transform,args,output,locked,nemsys_vtable);
 }
 double __fastcall judge_line_update_hook(Ptr view) {
     const auto world=camera::visual_world(updating_world,drawing_world);
-    const bool locked=world && world==current_world &&
-        field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+    const bool locked=visual_camera_locked(world);
     return judge_line_control.update(original_judge_line_update,view,locked,judge_line_vtable);
 }
 Ptr __fastcall cursor_event_hook(Ptr view,Ptr events) {
     const auto world=camera::visual_world(updating_world,drawing_world);
-    const bool locked=world && world==current_world &&
-        field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+    const bool locked=visual_camera_locked(world);
     const bool borrowed=locked && camera_control.before_cursor_event(world);
     try {
         const auto result=cursor_control.dispatch(original_cursor_event,view,events,locked,cursor_vtable);
@@ -460,8 +460,7 @@ struct VisualScope {
     bool borrowed{};
     VisualScope(Ptr view,Ptr vtable,camera::VisualView kind) {
         const auto world=camera::visual_world(updating_world,drawing_world);
-        const bool locked=world && world==current_world &&
-            field<Ptr>(world,24)==image+native::addresses().play_state && session.camera_requested() && supported(world);
+        const bool locked=visual_camera_locked(world);
         borrowed=locked && visual_control.begin(view,vtable,kind,lease);
     }
     ~VisualScope() {

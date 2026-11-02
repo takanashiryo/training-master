@@ -7,6 +7,27 @@ namespace training::camera {
 namespace {
 template<class T> T& field(Ptr p,std::size_t offset) { return *reinterpret_cast<T*>(p+offset); }
 bool bounded(float value) { return std::isfinite(value) && std::fabs(value)<1e6f; }
+
+struct VisualOffsets { std::size_t first,second; };
+constexpr VisualOffsets visual_offsets(VisualView kind) {
+    switch(kind) {
+    case VisualView::Nemsys: return {56,72};
+    case VisualView::ButtonBomb: return {256,0};
+    case VisualView::KnobBomb: return {464,480};
+    case VisualView::KnobBombUpdate: return {472,488};
+    }
+    return {464,0};
+}
+
+template<class Entry,std::size_t N,class Angles>
+Entry* capture_source(std::array<Entry,N>& entries,Ptr source,const Angles& angles) {
+    for(auto& entry:entries) if(entry.source==source) return &entry;
+    for(auto& entry:entries) if(!entry.source) {
+        entry={source,angles};
+        return &entry;
+    }
+    return nullptr;
+}
 }
 void NemsysController::reset() { view_=0; active_=false; }
 Ptr NemsysController::transform(NemsysTransform original,Ptr args,Ptr output,bool locked,Ptr expected_vtable) {
@@ -129,8 +150,7 @@ void VisualController::reset() { first_sources_={}; second_sources_={}; }
 bool VisualController::begin(Ptr view,Ptr expected_vtable,VisualView kind,VisualLease& lease) {
     lease={};
     if(!view || !expected_vtable) return false;
-    const std::size_t first_offset=kind==VisualView::Nemsys?56:kind==VisualView::ButtonBomb?256:kind==VisualView::KnobBombUpdate?472:464;
-    const std::size_t second_offset=kind==VisualView::Nemsys?72:kind==VisualView::KnobBomb?480:kind==VisualView::KnobBombUpdate?488:0;
+    const auto [first_offset,second_offset]=visual_offsets(kind);
     __try {
         if(field<Ptr>(view,0)!=expected_vtable) return false;
         const auto first=field<Ptr>(view,first_offset),second=second_offset?field<Ptr>(view,second_offset):0;
@@ -142,20 +162,10 @@ bool VisualController::begin(Ptr view,Ptr expected_vtable,VisualView kind,Visual
             a=field<float>(second,0); b=field<float>(second,4); c=field<float>(second,16);
             if(!bounded(a) || !bounded(b) || !bounded(c)) return false;
         }
-        FirstSource* frozen_first=nullptr;
-        for(auto& entry:first_sources_) if(entry.source==first) { frozen_first=&entry; break; }
-        if(!frozen_first) for(auto& entry:first_sources_) if(!entry.source) {
-            entry={first,{x,y}}; frozen_first=&entry; break;
-        }
+        const auto frozen_first=capture_source(first_sources_,first,std::array<float,2>{x,y});
         if(!frozen_first) return false;
-        SecondSource* frozen_second=nullptr;
-        if(second) {
-            for(auto& entry:second_sources_) if(entry.source==second) { frozen_second=&entry; break; }
-            if(!frozen_second) for(auto& entry:second_sources_) if(!entry.source) {
-                entry={second,{a,b,c}}; frozen_second=&entry; break;
-            }
-            if(!frozen_second) return false;
-        }
+        const auto frozen_second=second?capture_source(second_sources_,second,std::array<float,3>{a,b,c}):nullptr;
+        if(second && !frozen_second) return false;
         lease.view=view; lease.first_offset=first_offset; lease.second_offset=second_offset;
         lease.first_original=first; lease.second_original=second;
         std::memcpy(lease.first.data(),reinterpret_cast<const void*>(first),sizeof(lease.first));

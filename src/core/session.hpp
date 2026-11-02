@@ -14,7 +14,6 @@ struct Track {
     std::uint32_t music_id{};
     std::uint32_t difficulty{};
     float duration{};
-    std::uint32_t buttons{}, lasers{};
     bool native_quick_finish{};
     std::shared_ptr<const Chart> preview;
     bool autoplay_ready{};

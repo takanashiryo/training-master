@@ -36,7 +36,7 @@ void tick(Session& s,Game& g,float pos) {
     if (!enabling)
         for(unsigned i=0;i<30 && s.snapshot().rewinding;++i) s.tick(g.pos,g.paused,g,.05f);
 }
-void begin(Session& s,bool ready=true) { s.set_loop_buffers(0,0); s.begin({"test.vox",12,3,120.f,1000,100},ready); }
+void begin(Session& s,bool ready=true) { s.set_loop_buffers(0,0); s.begin({"test.vox",12,3,120.f},ready); }
 int main() {
     try {
         Session s; Game g; begin(s);
@@ -61,7 +61,7 @@ int main() {
         check(!g.paused && g.speed==1 && s.suppress_result(),"disable restores transport, not eligibility");
         command(s,Action::Finish); tick(s,g,30); check(g.finished,"finish works after disable");
         s.end(g); check(s.suppress_result(),"teardown must preserve result latch");
-        s.begin({"test.vox",12,3,120.f,1000,100},true,true);
+        s.begin({"test.vox",12,3,120.f},true,true);
         check(s.suppress_result() && !s.snapshot().enabled,"native retry retains taint while controls default off");
         const auto old=s.snapshot().generation;
         begin(s); s.submit({old,Action::Enable}); tick(s,g,0);
@@ -81,7 +81,7 @@ int main() {
         begin(s); command(s,Action::Enable); command(s,Action::Seek,-5); tick(s,g,0); check(g.pos==0,"seek clamps below start");
         command(s,Action::Seek,500); tick(s,g,0); check(g.pos==120,"seek clamps beyond end");
         s.result_blocked(); s.end(g); begin(s); check(s.snapshot().blocked_results==1,"diagnostics persist across tracks");
-        s.begin({"test.vox",12,3,120.f,1000,100,true},true);
+        s.begin({"test.vox",12,3,120.f,true},true);
         command(s,Action::Enable); command(s,Action::SetLoop,1); command(s,Action::SetRate,.5f);
         command(s,Action::Pause); tick(s,g,30);
         command(s,Action::Seek,60); command(s,Action::Enable);
@@ -106,7 +106,7 @@ int main() {
         command(s,Action::SetLoop,0); const auto saved_seeks=g.seeks; tick(s,g,121);
         check(g.seeks==saved_seeks && g.paused && s.snapshot().at_end && s.snapshot().in==100 && s.snapshot().out==120,
               "disabling loop at song end must retain selection and pause without rewinding");
-        Track automatic{"test.vox",12,3,120.f,1000,100}; automatic.autoplay_ready=true;
+        Track automatic{"test.vox",12,3,120.f}; automatic.autoplay_ready=true;
         s.begin(automatic,true);
         check(!s.snapshot().autoplay,"AutoPlay defaults off for each track");
         command(s,Action::SetAutoplay,1); tick(s,g,1);

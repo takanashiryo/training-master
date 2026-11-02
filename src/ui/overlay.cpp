@@ -726,23 +726,8 @@ void draw_about() {
     if (ImGui::Button(i18n::label("Close"))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
-void draw_controls(Session& session,const State& s) {
+void draw_transport(Session& session,const State& s) {
     auto send=[&](Action action,float value=0.f){session.submit({s.generation,action,value});};
-    draw_song_info(s.track);
-    bool enabled=s.enabled;
-    ImGui::BeginDisabled(!s.ready || s.enabled || s.finish_requested);
-    if (ImGui::Checkbox(i18n::label("Enable training for this track"),&enabled)) send(enabled?Action::Enable:Action::Disable);
-    ImGui::EndDisabled();
-    if(s.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",i18n::text("Use Finish Immediately to exit training."));
-    if (!s.ready) ImGui::TextWrapped("%s",i18n::text("Unavailable: unsupported mode or missing native context. Load plugin before selecting a song. Check log."));
-    if (s.message!="Training is off" &&
-        s.message!="Practice track: results and upload disabled" &&
-        s.message!="Training off; this track still cannot save results" &&
-        s.message!="AutoPlay enabled; results and upload disabled" &&
-        s.message!="Practice finished; result collection remains blocked")
-        ImGui::TextWrapped("%s",i18n::text(s.message.c_str()));
-    const float control_spacing=ImGui::GetStyle().ItemSpacing.x;
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{control_spacing,control_spacing});
     section("Transport");
     ImGui::BeginDisabled(!s.enabled || s.rewinding);
     // Keep the local drag value while dragging; never overwrite it with snapshots.
@@ -787,6 +772,9 @@ void draw_controls(Session& session,const State& s) {
         if (rate<1.5f) ImGui::SameLine();
     }
     ImGui::EndDisabled();
+}
+void draw_settings(Session& session,const State& s) {
+    auto send=[&](Action action,float value=0.f){session.submit({s.generation,action,value});};
     section("Setting");
     ImGui::BeginDisabled(!s.enabled);
     bool automatic=s.autoplay;
@@ -817,6 +805,26 @@ void draw_controls(Session& session,const State& s) {
     ImGui::EndDisabled(); ImGui::EndDisabled();
     if (!s.track.autoplay_ready) ImGui::TextDisabled("%s",i18n::text("Native AutoPlay is unavailable."));
     ImGui::EndDisabled();
+}
+void draw_controls(Session& session,const State& s) {
+    auto send=[&](Action action,float value=0.f){session.submit({s.generation,action,value});};
+    draw_song_info(s.track);
+    bool enabled=s.enabled;
+    ImGui::BeginDisabled(!s.ready || s.enabled || s.finish_requested);
+    if (ImGui::Checkbox(i18n::label("Enable training for this track"),&enabled)) send(enabled?Action::Enable:Action::Disable);
+    ImGui::EndDisabled();
+    if(s.enabled && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) ImGui::SetTooltip("%s",i18n::text("Use Finish Immediately to exit training."));
+    if (!s.ready) ImGui::TextWrapped("%s",i18n::text("Unavailable: unsupported mode or missing native context. Load plugin before selecting a song. Check log."));
+    if (s.message!="Training is off" &&
+        s.message!="Practice track: results and upload disabled" &&
+        s.message!="Training off; this track still cannot save results" &&
+        s.message!="AutoPlay enabled; results and upload disabled" &&
+        s.message!="Practice finished; result collection remains blocked")
+        ImGui::TextWrapped("%s",i18n::text(s.message.c_str()));
+    const float control_spacing=ImGui::GetStyle().ItemSpacing.x;
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,{control_spacing,control_spacing});
+    draw_transport(session,s);
+    draw_settings(session,s);
     ImGui::PopStyleVar();
 }
 void draw_finish(Session& session,const State& s) {

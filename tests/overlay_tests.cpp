@@ -101,7 +101,7 @@ int main() {
         training::set_overlay_status("Game hooks ready");
         const auto ready=render(session);
         only_message(ready,"Choose a track to start training.");
-        training::Track track{"test.vox",12,3,120.f,1000,100}; track.autoplay_ready=track.camera_ready=true;
+        training::Track track{"test.vox",12,3,120.f}; track.autoplay_ready=track.camera_ready=true;
         track.lane_speed_ready=true; track.gauge_ready=true;
         auto info=std::make_shared<training::SongInfo>();
         info->title="Test song & title"; info->artist="Test artist"; info->difficulty="GRAVITY  Lv. 18.7";
