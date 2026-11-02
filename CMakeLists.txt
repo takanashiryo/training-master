@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(sdvx_training VERSION 0.1.69 LANGUAGES C CXX)
+project(sdvx_training LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -24,6 +24,14 @@ foreach(license TRAINING_IMGUI_LICENSE TRAINING_MINHOOK_LICENSE)
   string(REGEX REPLACE "^${TRAINING_UTF8_BOM}" "" ${license} "${${license}}")
 endforeach()
 configure_file(src/ui/about.hpp.in generated/training_about.hpp @ONLY)
+# Refresh at build time instead of retaining the earlier configure timestamp.
+# The script rewrites the header only when the displayed minute changes.
+add_custom_target(training_build_version
+  COMMAND "${CMAKE_COMMAND}"
+    "-DTRAINING_VERSION_HEADER=${CMAKE_CURRENT_BINARY_DIR}/generated/training_version.hpp"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_version.cmake"
+  BYPRODUCTS "${CMAKE_CURRENT_BINARY_DIR}/generated/training_version.hpp"
+  VERBATIM)
 add_library(imgui STATIC ${imgui_SOURCE_DIR}/imgui.cpp ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp ${imgui_SOURCE_DIR}/imgui_widgets.cpp
   ${imgui_SOURCE_DIR}/backends/imgui_impl_win32.cpp ${imgui_SOURCE_DIR}/backends/imgui_impl_dx9.cpp)
@@ -84,6 +92,11 @@ add_executable(training_verify src/app/verify.cpp src/native/profile.cpp src/nat
 target_compile_definitions(training_verify PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX UNICODE _UNICODE)
 target_link_libraries(training_verify PRIVATE training_autoplay minhook bcrypt)
 enable_testing()
+add_test(NAME training_build_version
+  COMMAND "${CMAKE_COMMAND}"
+    "-DTRAINING_VERSION_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/cmake/build_version.cmake"
+    "-DTRAINING_TEST_HEADER=${CMAKE_CURRENT_BINARY_DIR}/generated/training_version_test.hpp"
+    -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/build_version_tests.cmake")
 add_executable(training_judgment_filter_tests tests/judgment_filter_tests.cpp src/game/judgment_filter.cpp)
 target_include_directories(training_judgment_filter_tests PRIVATE src)
 target_compile_definitions(training_judgment_filter_tests PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
@@ -225,6 +238,7 @@ if(MSVC)
   endforeach()
 endif()
 foreach(t sdvx_training training_preview training_overlay_tests training_overlay_render_tests)
+  add_dependencies(${t} training_build_version)
   target_include_directories(${t} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
   target_link_libraries(${t} PRIVATE training_preferences)
 endforeach()

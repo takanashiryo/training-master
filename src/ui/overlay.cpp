@@ -703,7 +703,7 @@ void draw_about() {
     ImGui::SetNextWindowBgAlpha(preferences().snapshot().background_opacity);
     if (!ImGui::BeginPopupModal(i18n::label("About Training Master"),&open,ImGuiWindowFlags_NoResize)) return;
     ImGui::TextUnformatted(i18n::text("Training Master"));
-    ImGui::Text(i18n::text("Version %s"),about::version);
+    ImGui::Text(i18n::text("Build date %s"),about::build_date);
     ImGui::TextUnformatted("Build by Takanashi Ryo");
     section("Third-party Licenses");
     static int selected{};

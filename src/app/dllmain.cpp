@@ -9,7 +9,7 @@ DWORD WINAPI start(void* module) {
     training::open_log(static_cast<HMODULE>(module));
     std::string config_error;
     if(!training::initialize_preferences(static_cast<HMODULE>(module),config_error)) training::log(config_error);
-    training::log(std::string("Training Master ")+training::about::version+" starting (disabled by default)");
+    training::log(std::string("Training Master ")+training::about::build_date+" starting (disabled by default)");
     const auto mh=MH_Initialize();
     if (mh!=MH_OK) { training::log("MinHook initialization failed"); return 1; }
     HMODULE game{};

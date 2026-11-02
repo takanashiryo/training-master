@@ -37,7 +37,7 @@ inline constexpr Translation catalog[]{
     TM_TEXT("Press a key... (Esc cancels)","请按下快捷键…（Esc 取消）"),
     TM_TEXT("Ctrl / Alt / Shift combinations supported.","支持 Ctrl / Alt / Shift 组合键。"),
     TM_TEXT("Third-party Licenses","第三方许可证"),
-    TM_TEXT("Version %s","版本 %s"),
+    TM_TEXT("Build date %s","构建日期 %s"),
     TM_TEXT("Music ID","曲目 ID"),
     TM_TEXT("Title","曲名"),
     TM_TEXT("Artist","艺术家"),

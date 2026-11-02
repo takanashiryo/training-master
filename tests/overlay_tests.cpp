@@ -1,6 +1,7 @@
 #include "ui/overlay.hpp"
 #include "ui/preferences.hpp"
 #include "core/judgment.hpp"
+#include "training_version.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
@@ -317,9 +318,13 @@ int main() {
         const auto chinese_about=render(session);
         check(chinese_about.find("关于训练大师")!=std::string::npos && chinese_about.find("第三方许可证")!=std::string::npos &&
               chinese_about.find("Permission is hereby granted")!=std::string::npos,"About must translate its UI and preserve the original license");
-        check(chinese_about.find("版本 ")!=std::string::npos && chinese_about.find("Build by Takanashi Ryo")!=std::string::npos &&
+        const std::string build_date=training::about::build_date;
+        check(build_date.size()==16 && build_date[4]=='-' && build_date[7]=='-' && build_date[10]==' ' && build_date[13]==':' &&
+              std::all_of(build_date.begin(),build_date.end(),[](char c){return (c>='0' && c<='9') || c=='-' || c==' ' || c==':';}),
+              "build date must use YYYY-MM-DD HH:MM");
+        check(chinese_about.find(std::string("构建日期 ")+build_date)!=std::string::npos && chinese_about.find("Build by Takanashi Ryo")!=std::string::npos &&
               chinese_about.find("Close Beta")==std::string::npos && chinese_about.find("Copyright (c) Takanashi Ryo")==std::string::npos,
-              "About must show the version and build credit without the beta or project copyright line");
+              "About must show the build date and build credit without the beta or project copyright line");
         auto* about=ImGui::FindWindowByName(training::i18n::label("About Training Master"));
         check(about!=nullptr,"translated About window must exist");
         ImGui::ActivateItemByID(about->GetID(training::i18n::label("Close"))); render(session);
@@ -333,6 +338,13 @@ int main() {
         const auto restored=render(session);
         check(restored.find("Finish Immediately")!=std::string::npos && restored.find("Training Master")!=std::string::npos &&
               ImGui::FindWindowByName("###Training Master")==panel,"English labels must restore without changing the window identity");
+        ImGui::ActivateItemByID(ImHashStr(training::i18n::label("About"),0,menu));
+        const auto english_about=render(session);
+        check(english_about.find(std::string("Build date ")+build_date)!=std::string::npos,
+              "English About must show the same build date");
+        auto* english_about_window=ImGui::FindWindowByName(training::i18n::label("About Training Master"));
+        check(english_about_window!=nullptr,"English About window must exist");
+        ImGui::ActivateItemByID(english_about_window->GetID(training::i18n::label("Close"))); render(session);
         training::set_overlay_status("another detailed hook failure",true);
         only_message(render(session),"Hook entry not found!");
         std::filesystem::remove(config); ImGui::DestroyContext(); std::cout<<"Overlay hook-failure status scenarios passed\n"; return 0;
