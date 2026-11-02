@@ -110,6 +110,7 @@ bool PreferencesStore::load(const std::filesystem::path& path,std::string& error
         else if(section=="overlay" && key=="ctrl") field=boolean(text,value_.hotkey.ctrl);
         else if(section=="overlay" && key=="alt") field=boolean(text,value_.hotkey.alt);
         else if(section=="overlay" && key=="shift") field=boolean(text,value_.hotkey.shift);
+        else if(section=="overlay" && key=="alwaysshowjudgmentcounter") field=boolean(text,value_.always_show_judgment_counter);
         else if(section=="overlay" && key=="language") {
             const auto language=lower(text);
             field=language=="en" || language=="zh-cn";
@@ -145,6 +146,7 @@ bool PreferencesStore::write(const Preferences& value,std::string& error) {
            <<key_token(value.hotkey.key)<<"\nCtrl="<<value.hotkey.ctrl<<"\nAlt="<<value.hotkey.alt<<"\nShift="<<value.hotkey.shift
            <<"\nLanguage="<<(value.language==i18n::Language::Chinese?"zh-CN":"en")
            <<"\nBackgroundOpacity="<<value.background_opacity
+           <<"\nAlwaysShowJudgmentCounter="<<value.always_show_judgment_counter
            <<"\n\n[ChartView]\nDefaultColumnMeasures="<<value.chart_column_measures
            <<"\nFollowPlayback="<<value.follow_playback<<'\n';
         out.flush();

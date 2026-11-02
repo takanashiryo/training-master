@@ -2,6 +2,7 @@
 #include "game/autoplay_resolver.hpp"
 #include <MinHook.h>
 #include <iostream>
+#include <cstring>
 #include <vector>
 #include <string_view>
 // Inspect a mapped image without resolving imports, executing game code or DllMain.
@@ -33,6 +34,30 @@ int wmain(int argc,wchar_t** argv) {
     if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&
         automatic.layout.timer_vtable==base+a.game_timer_vtable) {
         targets.push_back(automatic.layout.judge-base);
+        if(automatic.layout.judgment_event && automatic.layout.judgment_gauge==base+a.gauge_update) {
+            const auto code=reinterpret_cast<const unsigned char*>(automatic.layout.judgment_event);
+            std::uintptr_t secondary{};
+            for(const unsigned offset:{539u,569u}) if(code[offset-3]==0x4c && code[offset-2]==0x8d && code[offset-1]==0x05) {
+                std::int32_t displacement{}; std::memcpy(&displacement,code+offset,4);
+                secondary=automatic.layout.judgment_event+offset+4+displacement;
+                break;
+            }
+            if(!secondary || *reinterpret_cast<const std::uintptr_t*>(secondary+136)!=base+a.gauge_failed) {
+                std::cerr<<"Judgment callback secondary gauge interface mismatch\n";
+                MH_Uninitialize(); FreeLibrary(module); return 8;
+            }
+            targets.push_back(automatic.layout.judgment_event-base);
+            std::cout<<"Judgment callback RVA=0x"<<std::hex<<automatic.layout.judgment_event-base<<std::dec<<'\n';
+        } else {
+            std::cout<<"Judgment callback unavailable or disagrees with gauge updater\n";
+            if(require_autoplay) { MH_Uninitialize(); FreeLibrary(module); return 7; }
+        }
+        if(automatic.layout.judgment_color_option)
+            std::cout<<"EARLY/LATE color option RVA=0x"<<std::hex<<automatic.layout.judgment_color_option-base<<std::dec<<'\n';
+        else if(require_autoplay) { std::cerr<<"EARLY/LATE color option unavailable\n"; MH_Uninitialize(); FreeLibrary(module); return 9; }
+        if(automatic.layout.s_critical_flag && automatic.layout.s_critical_flag+4==training::native::world_layout().gauge_types)
+            std::cout<<"S-CRITICAL flag offset=0x"<<std::hex<<automatic.layout.s_critical_flag<<std::dec<<'\n';
+        else if(require_autoplay) { std::cerr<<"S-CRITICAL flag unavailable or disagrees with world layout\n"; MH_Uninitialize(); FreeLibrary(module); return 10; }
         std::cout<<"Native AutoPlay discovered; AutoJudge RVA=0x"<<std::hex<<automatic.layout.judge-base<<std::dec<<'\n';
     } else {
         std::cout<<"Native AutoPlay unavailable: "<<(automatic?"training layout mismatch":automatic.error)<<'\n';

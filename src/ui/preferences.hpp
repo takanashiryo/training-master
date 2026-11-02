@@ -17,6 +17,7 @@ struct Preferences {
     float background_opacity{.90f};
     int chart_column_measures{4};
     bool follow_playback{true};
+    bool always_show_judgment_counter{};
     i18n::Language language{i18n::Language::English};
     bool operator==(const Preferences&) const = default;
 };

@@ -1,4 +1,6 @@
 #include "ui/overlay.hpp"
+#include "core/judgment.hpp"
+#include "ui/preferences.hpp"
 #include <MinHook.h>
 #include <imgui.h>
 #include <imgui_internal.h>
@@ -10,6 +12,12 @@
 
 namespace {
 using Microsoft::WRL::ComPtr;
+struct TestBackend final:training::Backend {
+    bool pause(bool) override { return true; }
+    bool seek(float) override { return true; }
+    bool rate(float) override { return true; }
+    bool finish() override { return true; }
+};
 void require(HRESULT hr,const char* message) { if (FAILED(hr)) throw std::runtime_error(message); }
 unsigned changed_pixels(IDirect3DDevice9* device,IDirect3DSurface9* surface) {
     D3DSURFACE_DESC desc{}; surface->GetDesc(&desc);
@@ -269,7 +277,7 @@ int main(int argc,char** argv) {
         std::cout<<"One "<<mode<<": total overlay frames="<<displayed_frames<<", backbuffer overlay pixels="<<visible_pixels
                  <<", target restored="<<(restored.Get()==offscreen.Get())<<", state restored="<<states<<'\n';
         bool ok=offscreen_frames==0 && contaminated==0 && displayed_frames==1 && visible_pixels>100 && restored.Get()==offscreen.Get() && states;
-        training::show_overlay(false); const int hidden_before=frame_count();
+        training::show_overlay(false); int hidden_before=frame_count();
         device->SetRenderState(D3DRS_COLORWRITEENABLE,0xf); device->SetRenderState(D3DRS_SRGBWRITEENABLE,FALSE);
         device->SetRenderTarget(0,back.Get());
         require(device->Clear(0,nullptr,D3DCLEAR_TARGET,D3DCOLOR_XRGB(16,16,16),1,0),"hidden clear failed");
@@ -279,6 +287,27 @@ int main(int argc,char** argv) {
         const bool hidden=frame_count()==hidden_before && hidden_pixels==0;
         if (!hidden) std::cout<<"Hidden detail: frames="<<frame_count()-hidden_before<<" pixels="<<hidden_pixels<<'\n';
         std::cout<<"Hidden overlay: no frames/draws="<<hidden<<'\n'; ok &= hidden;
+        const auto config=std::filesystem::temp_directory_path()/(L"training-render-"+std::to_wstring(GetCurrentProcessId())+L".ini");
+        std::string config_error;
+        if(!training::preferences().load(config,config_error)) throw std::runtime_error("counter config fixture failed");
+        session.begin({"fixture.vox",1,0,120},true);
+        training::judgment::set_available(true);
+        const auto default_before=frame_count();
+        for(int i=0;i<3;++i) { pass(device.Get()); require(display(),"default hidden counter Present failed"); }
+        const bool default_hidden=frame_count()==default_before && changed_pixels(device.Get(),back.Get())==0;
+        std::cout<<"Default hidden counter="<<default_hidden<<'\n'; ok &= default_hidden;
+        auto options=training::preferences().snapshot(); options.always_show_judgment_counter=true;
+        if(!training::preferences().save(options,config_error)) throw std::runtime_error("counter config save failed");
+        const auto counter_before=frame_count();
+        // ImGui measures a newly created auto-sized window on its first frame.
+        for(int i=0;i<3;++i) { pass(device.Get()); require(display(),"judgment-only Present failed"); }
+        const auto counter_pixels=changed_pixels(device.Get(),back.Get());
+        const bool judgment_visible=frame_count()==counter_before+3 && counter_pixels>100;
+        if(!judgment_visible) std::cout<<"Judgment detail: frames="<<frame_count()-counter_before<<" pixels="<<counter_pixels<<'\n';
+        std::cout<<"Hidden main panel, active judgment window="<<judgment_visible<<'\n'; ok &= judgment_visible;
+        TestBackend backend; session.end(backend);
+        std::filesystem::remove(config);
+        hidden_before=frame_count();
         // Real device reset: overlay-owned default-pool resources must not keep Reset from succeeding.
         device->SetRenderTarget(1,nullptr); device->SetRenderTarget(0,back.Get()); device->SetDepthStencilSurface(nullptr);
         restored.Reset(); restored_depth.Reset(); restored_secondary.Reset(); secondary.Reset(); depth.Reset();

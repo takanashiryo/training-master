@@ -8,6 +8,9 @@ struct Translation { const char* english; const char* chinese; const char* engli
 // Stable English IDs keep menus, windows and controls intact across languages.
 #define TM_TEXT(en,zh) Translation{en,zh,en "###" en,zh "###" en}
 inline constexpr Translation catalog[]{
+    TM_TEXT("Judgment counter unavailable","判定计数器不可用"),
+    TM_TEXT("Judgment counter","判定计数器"),
+    TM_TEXT("Always show judgment counter","始终显示判定计数器"),
     TM_TEXT("Option","选项"),
     TM_TEXT("About","关于"),
     TM_TEXT("Training Master","训练大师"),

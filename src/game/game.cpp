@@ -1,5 +1,6 @@
 #include "game/game.hpp"
 #include "core/audio_envelope.hpp"
+#include "core/judgment.hpp"
 #include "native/profile.hpp"
 #include "game/scene_transition.hpp"
 #include "game/practice_stage.hpp"
@@ -10,6 +11,7 @@
 #include "game/post_effect.hpp"
 #include "game/lane_speed.hpp"
 #include "game/gauge.hpp"
+#include "game/judgment_filter.hpp"
 #include <MinHook.h>
 #include <atomic>
 #include <algorithm>
@@ -48,6 +50,9 @@ bool camera_updated{};
 MusicSelectRoute music_select_route;
 thread_local Ptr updating_world{};
 thread_local bool suppress_posteffects{};
+thread_local bool judgment_recording{}, judgment_seek{};
+thread_local float judgment_seek_target{};
+thread_local judgment_filter::Region judgment_region{};
 std::atomic<float> requested_rate{1.f};
 std::atomic<bool> feeder_seen{};
 std::atomic<bool> music_muted{};
@@ -72,7 +77,21 @@ NativeSerialize original_serialize{};
 NativeContinue original_continue{};
 NativeFlow original_flow{};
 autoplay::Judge original_judge{};
+using JudgmentEvent=Ptr(__fastcall*)(Ptr,Ptr,Ptr,Ptr,float);
+JudgmentEvent original_judgment_event{};
 bool autoplay_ready{};
+Ptr judgment_color_option{};
+std::uint32_t s_critical_flag{};
+int last_s_critical=-1;
+ULONGLONG judgment_color_last_poll{};
+bool read_judgment_colors(Ptr option,bool& swapped) {
+    __try {
+        if(!option) return false;
+        const auto value=reinterpret_cast<unsigned(__fastcall*)(int)>(option)(0);
+        if(value!=1 && value!=2) return false;
+        swapped=value==1; return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 template<class T> T fn(Ptr rva) { return reinterpret_cast<T>(image+rva); }
 float position(Ptr timer) {
     return field<float>(timer,32)+(field<std::uint8_t>(timer,40)?field<float>(timer,36):0.f);
@@ -102,6 +121,7 @@ bool transport_seek(Ptr world, float target,bool seek_audio=true) {
     __try {
         const auto timer=field<Ptr>(world,216);
         if (!timer || !std::isfinite(target)) return false;
+        judgment_seek=true; judgment_seek_target=target;
         if(updating_world==world && current_world==world) suppress_posteffects=true;
         float delta=target-position(timer);
         fn<void(__fastcall*)(Ptr,const float*)>(native::addresses().timer_seek)(timer,&delta);
@@ -257,6 +277,9 @@ void __fastcall world_update_hook(Ptr world) {
         lane_fault=lane_reported=false;
         current_world=world;
         autoplay::begin_track();
+        judgment::set_colors_swapped(false); judgment::set_s_critical_enabled(true); judgment::reset();
+        last_s_critical=-1;
+        judgment_color_last_poll=0;
         requested_rate=1.f;
         const auto timer=field<Ptr>(world,216);
         const bool ready=supported(world) && music_select_route.valid() && feeder_seen.load() && timer &&
@@ -273,6 +296,14 @@ void __fastcall world_update_hook(Ptr world) {
             " lane_speed_ready="+std::to_string(metadata.track.lane_speed_ready)+
             " gauge_ready="+std::to_string(metadata.track.gauge_ready)+"; training defaults to OFF");
     }
+    if (active && current_world==world && judgment_color_option) {
+        const auto now=GetTickCount64();
+        if(!judgment_color_last_poll || now-judgment_color_last_poll>=500) {
+            bool swapped{};
+            if(read_judgment_colors(judgment_color_option,swapped)) judgment::set_colors_swapped(swapped);
+            judgment_color_last_poll=now;
+        }
+    }
     if (current_world==world) {
         if(!lane_control.before_update(world)) lane_fault=true;
         if (!camera_control.before_update(world) && !camera_reported) {
@@ -283,17 +314,30 @@ void __fastcall world_update_hook(Ptr world) {
     }
     const auto previous=updating_world;
     const bool previous_suppression=suppress_posteffects;
+    const bool previous_recording=judgment_recording;
+    const auto previous_region=judgment_region;
     suppress_posteffects=false;
     updating_world=world;
     camera_updated=false;
     const auto control=session.snapshot();
+    judgment_recording=active && world==current_world && control.playing && !control.paused && !control.rewinding && !control.reversing;
+    judgment_region={active && world==current_world && control.enabled && control.loop,control.in,control.out};
     const bool automatic=active && world==current_world && control.playing && control.enabled && control.autoplay &&
         !control.reversing && !control.rewinding && supported(world);
     if (automatic) mark_tainted(world);
     if (active && world==current_world && autoplay_ready) autoplay::update(world,automatic,original_world_update);
     else original_world_update(world);
+    if(active && current_world==world && s_critical_flag) {
+        const auto value=field<std::uint8_t>(world,s_critical_flag);
+        if(value<=1 && value!=last_s_critical) {
+            judgment::set_s_critical_enabled(value!=0);
+            last_s_critical=value;
+        }
+    }
     updating_world=previous;
     suppress_posteffects=previous_suppression;
+    judgment_recording=previous_recording;
+    judgment_region=previous_region;
     if (current_world==world) {
         if(lane_fault && !lane_reported) {
             lane_reported=true;
@@ -380,6 +424,23 @@ Ptr __fastcall hisp_event_hook(Ptr updater,Ptr events) {
 Ptr __fastcall judge_hook(Ptr referee,Ptr output,Ptr note,float time) {
     return autoplay::judge(original_judge,referee,output,note,time);
 }
+// The game's score callback receives the same 40-byte JudgeResult for manual
+// and automatic play. Never alter the record or the callback's return value.
+Ptr __fastcall judgment_event_hook(Ptr context,Ptr output,Ptr note,Ptr result,float time) {
+    const bool owned=updating_world && updating_world==current_world;
+    bool suppressed=false;
+    Ptr returned{};
+    if(owned && judgment_region.active) {
+        const auto timer=field<Ptr>(updating_world,216);
+        const auto player=field<Ptr>(updating_world,200);
+        returned=judgment_filter::dispatch(original_judgment_event,context,output,note,result,time,
+            timer?position(timer):time,judgment_region,player,image+native::addresses().fumen_player_vtable,
+            fn<judgment_filter::Failed>(native::addresses().gauge_failed),&suppressed);
+    } else returned=original_judgment_event(context,output,note,result,time);
+    if(!suppressed && judgment_recording && !suppress_posteffects && owned)
+        judgment::observe_native(result);
+    return returned;
+}
 void __fastcall timer_update_hook(Ptr timer) {
     const auto world=updating_world;
     if (!world || world!=current_world || field<Ptr>(world,216)!=timer) {
@@ -407,7 +468,14 @@ void __fastcall timer_update_hook(Ptr timer) {
     original_timer_update(timer);
     GameBackend backend(world);
     const float cursor=state.reversing && reverse_player.owns_bus()?static_cast<float>(reverse_player.position()):position(timer);
+    judgment_seek=false;
     session.tick(cursor,field<std::uint8_t>(timer,16)==0,backend,static_cast<float>(elapsed));
+    const auto after=session.snapshot();
+    judgment_region={after.playing && after.enabled && after.loop,after.in,after.out};
+    judgment_recording=after.playing && !after.paused && !after.rewinding && !after.reversing;
+    const float loop_start=after.loop?loop_range(after).start:0.f;
+    if(judgment::should_reset(state.rewinding,after.rewinding,judgment_seek,judgment_seek_target,
+                              after.loop,after.in,loop_start)) judgment::reset();
     if (session.suppress_result()) mark_tainted(world);
 }
 void __fastcall destroy_hook(Ptr world) {
@@ -553,6 +621,15 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         log("Native AutoPlay located; AutoJudge RVA="+std::to_string(discovered.layout.judge-image));
     } else log(std::string("Native AutoPlay unavailable; training remains available: ")+
                (discovered?"resolver disagrees with training world/timer":discovered.error));
+    judgment_color_option=autoplay_ready?discovered.layout.judgment_color_option:0;
+    s_critical_flag=autoplay_ready && discovered.layout.s_critical_flag+4==native::world_layout().gauge_types?
+        discovered.layout.s_critical_flag:0;
+    if(!s_critical_flag) log("S-CRITICAL gameplay option unavailable; using seven-column counter");
+    if(!judgment_color_option) log("EARLY/LATE color option unavailable; using default colors");
+    const bool judgment_ready=autoplay_ready && discovered.layout.judgment_event &&
+        discovered.layout.judgment_gauge==image+a.gauge_update;
+    judgment::set_available(judgment_ready);
+    if (!judgment_ready) log("Judgment counter unavailable: callback ABI not verified");
     QueryPerformanceFrequency(&frequency);
     struct Hook { Ptr rva; void* detour; void** original; };
     std::vector<Hook> hooks{
@@ -575,11 +652,18 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         {native::addresses().world_update,reinterpret_cast<void*>(world_update_hook),reinterpret_cast<void**>(&original_world_update)}
     };
     if (autoplay_ready) hooks.push_back({discovered.layout.judge-image,reinterpret_cast<void*>(judge_hook),reinterpret_cast<void**>(&original_judge)});
+    if (judgment_ready) hooks.push_back({discovered.layout.judgment_event-image,
+        reinterpret_cast<void*>(judgment_event_hook),reinterpret_cast<void**>(&original_judgment_event)});
     std::vector<void*> created;
     for (const auto& h:hooks) {
         auto* address=reinterpret_cast<void*>(image+h.rva);
         const auto status=MH_CreateHook(address,h.detour,h.original);
         if (status!=MH_OK) {
+            if(judgment_ready && h.rva==discovered.layout.judgment_event-image) {
+                judgment::set_available(false);
+                log(std::string("Judgment counter hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
             for (auto* p:created) MH_RemoveHook(p);
             reason=std::string("Hook creation failed: ")+MH_StatusToString(status); return false;
         }

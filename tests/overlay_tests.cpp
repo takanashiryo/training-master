@@ -1,5 +1,6 @@
 #include "ui/overlay.hpp"
 #include "ui/preferences.hpp"
+#include "core/judgment.hpp"
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
@@ -50,6 +51,21 @@ std::string render(training::Session& session) {
     ImGui::Render();
     return text;
 }
+std::string render_counter(training::Session& session) {
+    ImGui::GetCurrentContext()->LogBuffer.clear();
+    ImGui::NewFrame(); ImGui::LogToBuffer();
+    training::draw_judgment_counter(session.snapshot());
+    const std::string text=ImGui::GetCurrentContext()->LogBuffer.c_str();
+    ImGui::LogFinish(); ImGui::Render(); return text;
+}
+bool counter_color(ImU32 color,float left,float right) {
+    const auto* window=ImGui::FindWindowByName("##judgment-counter");
+    if(!window) return false;
+    const float min=window->Pos.x+window->Size.x*left,max=window->Pos.x+window->Size.x*right;
+    for(const auto& vertex:window->DrawList->VtxBuffer)
+        if(vertex.col==color && vertex.pos.x>=min && vertex.pos.x<=max) return true;
+    return false;
+}
 void activate_transport(training::Session& session,const char* id) {
     ImGuiWindow* controls{};
     const bool finish=std::string_view(id)=="Finish Immediately";
@@ -95,6 +111,60 @@ int main() {
         session.begin(track,true);
         const auto playing=render(session);
         check(playing.find("Training is off")==std::string::npos,"training-off explanation must not be displayed");
+        training::judgment::set_available(true);
+        training::judgment::reset();
+        training::judgment::record(2,-.020f,true);
+        auto counter=render_counter(session);
+        check(counter.find("S-CRITICAL")!=std::string::npos && counter.find("-20.0")!=std::string::npos && counter.find("20.0 ms")!=std::string::npos,
+              "judgment window must display categories, signed mean and absolute mean");
+        training::judgment::reset();
+        for(int i=0;i<2;++i) training::judgment::record(3,-.010f,true);
+        for(int i=0;i<3;++i) training::judgment::record(4,0.f,true);
+        for(int i=0;i<4;++i) training::judgment::record(7,.010f,true);
+        training::judgment::set_s_critical_enabled(false);
+        counter=render_counter(session);
+        check(counter.find("S-CRITICAL")==std::string::npos && counter.find("CRITICAL")!=std::string::npos,
+              "disabled S-CRITICAL must display the five-column layout");
+        const auto* standard_table=ImGui::FindWindowByName("##judgment-counter");
+        check(standard_table && counter.find("9")!=std::string::npos,
+              "standard CRITICAL must combine early, central and late counts");
+        check(training::judgment::snapshot().counts[2]==2 && training::judgment::snapshot().counts[3]==3 &&
+              training::judgment::snapshot().counts[4]==4,"switching layouts must preserve the original counts");
+        training::judgment::set_s_critical_enabled(true);
+        counter=render_counter(session);
+        check(counter.find("S-CRITICAL")!=std::string::npos,"enabled S-CRITICAL must restore seven columns");
+        training::judgment::reset(); training::judgment::record(2,-.020f,true);
+        const auto red=ImGui::ColorConvertFloat4ToU32({1.f,.42f,.58f,1.f});
+        const auto blue=ImGui::ColorConvertFloat4ToU32({.33f,.70f,1.f,1.f});
+        render_counter(session);
+        const auto* initial_panel=ImGui::FindWindowByName("###Training Master");
+        const auto* initial_counter=ImGui::FindWindowByName("##judgment-counter");
+        check(initial_panel && initial_counter && initial_panel->Pos.y>=initial_counter->Pos.y+initial_counter->Size.y,
+              "default main window must start below the judgment counter");
+        check(initial_panel->Pos.y+initial_panel->Size.y<=io.DisplaySize.y,
+              "default main window must fit vertically at the normal display size");
+        check(counter_color(red,0,.3f) && counter_color(blue,.7f,1) && counter_color(red,.4f,.6f),
+              "default early must be red, late blue and negative average red");
+        training::judgment::set_colors_swapped(true); render_counter(session);
+        check(counter_color(blue,0,.3f) && counter_color(red,.7f,1) && counter_color(blue,.4f,.6f),
+              "swapped setting must reverse labels and negative average");
+        training::judgment::reset(); training::judgment::record(6,.020f,true); render_counter(session);
+        check(counter_color(red,.4f,.6f),"positive average must use swapped late color");
+        training::judgment::set_colors_swapped(false); render_counter(session);
+        check(counter_color(blue,.4f,.6f),"positive average must use default late color");
+        training::judgment::reset(); render_counter(session);
+        check(!counter_color(red,.4f,.6f) && !counter_color(blue,.4f,.6f),"zero average must use neutral color");
+        training::judgment::record(2,-.020f,true);
+        training::show_overlay(false); counter=render_counter(session);
+        check(counter.find("S-CRITICAL")==std::string::npos,
+              "judgment window must default to hidden when the main overlay is closed");
+        auto counter_preferences=training::preferences().snapshot(); counter_preferences.always_show_judgment_counter=true;
+        check(training::preferences().save(counter_preferences,config_error),"counter visibility fixture must save");
+        counter=render_counter(session);
+        check(counter.find("S-CRITICAL")!=std::string::npos,"always-show option must keep the counter visible");
+        counter_preferences.always_show_judgment_counter=false;
+        check(training::preferences().save(counter_preferences,config_error),"counter visibility fixture must restore default");
+        training::show_overlay(true);
         check(playing.find("Setting")!=std::string::npos && playing.find("AutoPlay")!=std::string::npos &&
               playing.find("AutoPlay diagnostics")==std::string::npos && playing.find("Block camera movement")!=std::string::npos,
               "Setting must expose AutoPlay and camera controls by default");
@@ -214,6 +284,12 @@ int main() {
               "Option follow switch must save immediately and survive reload");
         ImGui::ActivateItemByID(options->GetID(training::i18n::label("Follow playback"))); render(session);
         check(training::preferences().snapshot().follow_playback,"Option must also reenable following");
+        check(option.find("Always show judgment counter")!=std::string::npos,"Option must expose judgment counter visibility");
+        ImGui::ActivateItemByID(options->GetID(training::i18n::label("Always show judgment counter"))); render(session);
+        check(training::preferences().snapshot().always_show_judgment_counter && restarted.load(config,config_error) && restarted.snapshot().always_show_judgment_counter,
+              "Option counter switch must save immediately and survive reload");
+        ImGui::ActivateItemByID(options->GetID(training::i18n::label("Always show judgment counter"))); render(session);
+        check(!training::preferences().snapshot().always_show_judgment_counter,"counter always-show can be disabled");
         check(option.find("Language")!=std::string::npos && option.find("English")!=std::string::npos,"Option must expose an English-default language selector");
         ImGui::ActivateItemByID(options->GetID("##language")); render(session);
         ImGuiWindow* combo{};

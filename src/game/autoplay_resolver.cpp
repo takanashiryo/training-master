@@ -4,9 +4,11 @@
 #include <cstring>
 #include <initializer_list>
 #include <vector>
+#include <string_view>
 
 namespace training::autoplay_discovery {
 namespace {
+#include "game/judgment_patterns.inc"
 struct Region { std::uint32_t rva, size; bool code; };
 struct Function { std::uint32_t begin, end; };
 
@@ -239,6 +241,88 @@ Result resolve_impl(HMODULE module) {
         (layout.time_enabled >= layout.time_base && layout.time_enabled < layout.time_base+4) ||
         (layout.time_enabled >= layout.time_offset && layout.time_enabled < layout.time_offset+4))
         return {{}, "GameTimer accessor/layout missing or ambiguous"};
+    // Optional score callback. Full-body signatures preserve every layout and
+    // branch byte; only six/eight audited rel32 operands vary across builds.
+    // Failure affects the counter only, not existing AutoPlay or training.
+    auto matches_guard=[&](std::uint32_t at,std::string_view guard) {
+        if(!image.in_region(at,guard.size()/2,true)) return false;
+        auto nibble=[](char c)->unsigned { return c<='9'?static_cast<unsigned>(c-'0'):static_cast<unsigned>(c-'a'+10); };
+        for(std::size_t i=0;i<guard.size()/2;++i) {
+            if(guard[2*i]=='?' && guard[2*i+1]=='?') continue;
+            if(image.base[at+i]!=(nibble(guard[2*i])<<4|nibble(guard[2*i+1]))) return false;
+        }
+        return true;
+    };
+    unsigned judgment_matches=0;
+    for(const auto f:image.functions) {
+        const std::string_view guard=f.end-f.begin==670?judgment_new:
+            f.end-f.begin==708?judgment_old:std::string_view{};
+        if(guard.empty() || !clean_entry(image,f) || !matches_guard(f.begin,guard)) continue;
+        const auto disp=image.read<std::int32_t>(f.begin+205);
+        const auto target=static_cast<std::int64_t>(f.begin)+209+disp;
+        if(target<0 || target>=image.size || !image.in_region(static_cast<std::uint32_t>(target),1,true)) continue;
+        ++judgment_matches;
+        layout.judgment_event=reinterpret_cast<std::uintptr_t>(image.base+f.begin);
+        layout.judgment_gauge=reinterpret_cast<std::uintptr_t>(image.base+target);
+    }
+    if(judgment_matches!=1) layout.judgment_event=layout.judgment_gauge=0;
+    // Native option wrapper: option index 79 (EARLY/LATE palette), with a
+    // default of 2. Full wrapper + accessor bodies, both calls and RTTI names
+    // are verified before the game thread is allowed to call it.
+    static constexpr std::string_view color_wrapper=
+        "40534883ec2085c9742c83f901740bb8010000004883c4205bc3bb01000000ba500000008bcb"
+        "e8????????85c00f44c34883c4205bc3ba4f0000008d4ab2e8????????85c0b9020000000f44c14883c4205bc3";
+    static constexpr std::string_view option_accessor=
+        "48895c24084889742410574883ec304863f24c8d0d????????8bd94c8d05????????488b0d????????"
+        "33ff33d2897c2420e8????????448bc38d5702488bc8e8????????4885c07510488b5c2440488b742448"
+        "4883c4305fc381feff00000077048b7cb010488b5c24408bc7488b7424484883c4305fc3";
+    auto rel=[&](std::uint32_t base,std::uint32_t offset)->std::int64_t {
+        return static_cast<std::int64_t>(base)+offset+4+image.read<std::int32_t>(base+offset);
+    };
+    auto type_at=[&](std::int64_t target,std::string_view name) {
+        return target>=0 && target<image.size && image.in_region(static_cast<std::uint32_t>(target),16+name.size()+1,false) &&
+            std::memcmp(image.base+target+16,name.data(),name.size()+1)==0;
+    };
+    unsigned color_matches=0;
+    for(const auto f:image.functions) {
+        if(f.end-f.begin!=color_wrapper.size()/2 || !matches_guard(f.begin,color_wrapper)) continue;
+        const auto target=rel(f.begin,0x27);
+        if(target<0 || target>=image.size || target!=rel(f.begin,0x3f)) continue;
+        const auto accessor=static_cast<std::uint32_t>(target);
+        const auto func=image.function(accessor);
+        if(func.end-func.begin!=option_accessor.size()/2 || !matches_guard(accessor,option_accessor) ||
+           !type_at(rel(accessor,0x15),".?AVCPlayerParamGameData@@") ||
+           !type_at(rel(accessor,0x1e),".?AVCBaseGameData@@")) continue;
+        const auto global=rel(accessor,0x25),cast=rel(accessor,0x32),lookup=rel(accessor,0x40);
+        if(global<0 || cast<0 || lookup<0 || global>=image.size || cast>=image.size || lookup>=image.size ||
+           !image.in_region(static_cast<std::uint32_t>(global),sizeof(std::uintptr_t),false) ||
+           !image.in_region(static_cast<std::uint32_t>(cast),1,true) ||
+           !image.in_region(static_cast<std::uint32_t>(lookup),1,true)) continue;
+        ++color_matches; layout.judgment_color_option=reinterpret_cast<std::uintptr_t>(image.base+f.begin);
+    }
+    if(color_matches!=1) layout.judgment_color_option=0;
+    // The gameplay initializer combines the user option and forced gauge/mode
+    // conditions, then stores the effective S-CRITICAL flag in GameWorld.
+    // Match the complete branch sequence and validate both gauge references and
+    // call destinations; ambiguous or changed code leaves this feature disabled.
+    static constexpr std::string_view s_critical_guard=
+        "4180be????????00752b498d8e????????e8????????833805741a498d8e????????"
+        "e8????????8338077409e8????????84c07402b001418886????????84c0";
+    unsigned s_critical_matches=0;
+    for(const auto f:image.functions) {
+        if(f.end-f.begin<s_critical_guard.size()/2 || f.end-f.begin>0x20000) continue;
+        for(auto at=f.begin;at+s_critical_guard.size()/2<=f.end;++at) {
+            if(image.base[at]!=0x41 || image.base[at+1]!=0x80 || image.base[at+2]!=0xbe || !matches_guard(at,s_critical_guard)) continue;
+            const auto gauge=image.read<std::uint32_t>(at+0x0d),flag=image.read<std::uint32_t>(at+0x3a);
+            const auto first=rel(at,0x12),second=rel(at,0x23),option=rel(at,0x2d);
+            if(gauge!=image.read<std::uint32_t>(at+0x1e) || gauge<4 || flag!=gauge-4 ||
+               !field(gauge) || first!=second || first<0 || option<0 || first>=image.size || option>=image.size ||
+               !image.in_region(static_cast<std::uint32_t>(first),1,true) ||
+               !image.in_region(static_cast<std::uint32_t>(option),1,true)) continue;
+            ++s_critical_matches; layout.s_critical_flag=flag;
+        }
+    }
+    if(s_critical_matches!=1) layout.s_critical_flag=0;
     return {layout, nullptr};
 }
 

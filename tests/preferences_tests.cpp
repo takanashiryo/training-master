@@ -19,10 +19,12 @@ int main() {
         PreferencesStore store; std::string error;
         check(store.load(path,error),"missing INI must create defaults beside requested path");
         check(store.snapshot()==Preferences{},"defaults are 1 second on each side and Insert");
+        check(!store.snapshot().always_show_judgment_counter && read(path).find("AlwaysShowJudgmentCounter=0")!=std::string::npos,
+              "judgment counter must default to overlay-only and write its preference");
         check(store.snapshot().background_opacity==.90f,"default background opacity must be 90 percent");
         check(read(path).find("StartBufferSeconds=1")!=std::string::npos && read(path).find("EndBufferSeconds=1")!=std::string::npos,"defaults must be written");
         auto changed=store.snapshot(); changed.loop_before=0; changed.loop_after=2.75f;
-        changed.background_opacity=.37f; changed.chart_column_measures=7; changed.follow_playback=false; changed.language=i18n::Language::Chinese;
+        changed.background_opacity=.37f; changed.chart_column_measures=7; changed.follow_playback=false; changed.always_show_judgment_counter=true; changed.language=i18n::Language::Chinese;
         changed.hotkey={VK_F9,true,false,true};
         check(store.save(changed,error),"changed preferences must persist");
         PreferencesStore restarted;
@@ -34,6 +36,7 @@ int main() {
         }
         auto bad_language=changed; bad_language.language=static_cast<i18n::Language>(99);
         check(!store.save(bad_language,error) && store.snapshot()==changed && read(path)==bytes,"unsupported language must not alter preferences");
+        check(read(path).find("AlwaysShowJudgmentCounter=1")!=std::string::npos,"counter visibility preference must persist");
         check(read(path).find("Language=zh-CN")!=std::string::npos,"Chinese language must persist as zh-CN");
         auto bad=changed; bad.hotkey.key=VK_LBUTTON;
         check(!store.save(bad,error) && store.snapshot()==changed,"mouse buttons cannot become keyboard shortcuts");
@@ -57,7 +60,7 @@ int main() {
         check(!saved && !error.empty() && store.snapshot()==changed && read(path)==bytes,"failed write must retain old file and active values");
         {
             std::ofstream out(path,std::ios::binary|std::ios::trunc);
-            out<<"\xef\xbb\xbf[Loop]\nStartBufferSeconds=-5\nEndBufferSeconds=nan\n[Overlay]\nToggleKey=0x01\nLanguage=invalid\nCtrl=2\nBackgroundOpacity=1.1\n[ChartView]\nDefaultColumnMeasures=13\nFollowPlayback=2\n";
+            out<<"\xef\xbb\xbf[Loop]\nStartBufferSeconds=-5\nEndBufferSeconds=nan\n[Overlay]\nToggleKey=0x01\nLanguage=invalid\nCtrl=2\nBackgroundOpacity=1.1\nAlwaysShowJudgmentCounter=2\n[ChartView]\nDefaultColumnMeasures=13\nFollowPlayback=2\n";
         }
         PreferencesStore malformed;
         check(!malformed.load(path,error) && malformed.snapshot()==Preferences{},"malformed known values must fall back safely");
@@ -66,7 +69,7 @@ int main() {
             out<<"[Loop]\nStartBufferSeconds=1.25 ; seconds\nEndBufferSeconds=0\n[Overlay]\nToggleKey=0x7B\nCtrl=1\nAlt=1\nShift=0\n[ChartView]\nDefaultColumnSeconds=12\n";
         }
         check(malformed.load(path,error) && malformed.snapshot().hotkey==OverlayHotkey{VK_F12,true,true,false} &&
-              malformed.snapshot().loop_before==1.25f && malformed.snapshot().loop_after==0 && malformed.snapshot().background_opacity==.90f && malformed.snapshot().chart_column_measures==4 && malformed.snapshot().follow_playback && malformed.snapshot().language==i18n::Language::English,
+              malformed.snapshot().loop_before==1.25f && malformed.snapshot().loop_after==0 && malformed.snapshot().background_opacity==.90f && malformed.snapshot().chart_column_measures==4 && malformed.snapshot().follow_playback && !malformed.snapshot().always_show_judgment_counter && malformed.snapshot().language==i18n::Language::English,
               "legacy INI must preserve its keys and ignore the obsolete seconds unit, defaulting to 4 measures");
         for(const char* invalid:{"1.5","nan","0","13"}) {
             { std::ofstream out(path,std::ios::trunc); out<<"[ChartView]\nDefaultColumnMeasures="<<invalid<<'\n'; }
