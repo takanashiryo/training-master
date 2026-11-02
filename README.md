@@ -38,7 +38,7 @@ Open game then press `Insert`
 
 ## AI
 
-All code written and reversed by AI
+All code written and reversed by AI  
 UI design by human
 
 ## Plan

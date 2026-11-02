@@ -12,6 +12,8 @@ inline constexpr Translation catalog[]{
     TM_TEXT("About","关于"),
     TM_TEXT("Training Master","训练大师"),
     TM_TEXT("About Training Master","关于训练大师"),
+    TM_TEXT("Interface","界面"),
+    TM_TEXT("Keyboard shortcut","快捷键"),
     TM_TEXT("Language","语言"),
     TM_TEXT("Close","关闭"),
     TM_TEXT("Chart View","谱面预览"),

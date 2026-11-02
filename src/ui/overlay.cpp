@@ -613,6 +613,7 @@ void draw_options(Session& session,bool focus=false) {
     }
     auto value=preferences().snapshot();
     bool changed=false;
+    section("Interface");
     ImGui::TextUnformatted(i18n::text("Language"));
     ImGui::SetNextItemWidth(-1);
     const char* languages[]{"English","中文"};
@@ -626,27 +627,14 @@ void draw_options(Session& session,bool focus=false) {
         }
         ImGui::EndCombo();
     }
-    ImGui::Separator();
-    section("Chart View");
-    ImGui::TextUnformatted(i18n::text("Default measures per column"));
-    ImGui::SetNextItemWidth(-1);
-    changed|=ImGui::SliderInt("##default-column-measures",&value.chart_column_measures,1,12,i18n::text("%d measures / column"),ImGuiSliderFlags_AlwaysClamp);
-    changed|=ImGui::Checkbox(i18n::label("Follow playback"),&value.follow_playback);
-    ImGui::Separator();
     ImGui::TextUnformatted(i18n::text("Background opacity"));
     ImGui::SetNextItemWidth(-1);
     float opacity_percent=value.background_opacity*100.f;
     if(ImGui::SliderFloat("##background-opacity",&opacity_percent,0.f,100.f,"%.0f%%",ImGuiSliderFlags_AlwaysClamp)) {
         value.background_opacity=opacity_percent*.01f; changed=true;
     }
-    ImGui::Separator();
-    ImGui::TextUnformatted(i18n::text("Loop buffer"));
-    ImGui::SetNextItemWidth(120);
-    changed|=ImGui::InputFloat(i18n::label("Start buffer (s)"),&value.loop_before,.5f,5.f,"%.2f");
-    ImGui::SetNextItemWidth(120);
-    changed|=ImGui::InputFloat(i18n::label("End buffer (s)"),&value.loop_after,.5f,5.f,"%.2f");
-    ImGui::TextDisabled("%s",i18n::text("0 = no buffer. Clamped to the track."));
-    ImGui::Separator();
+
+    section("Keyboard shortcut");
     ImGui::TextUnformatted(i18n::text("Overlay hotkey"));
     const auto label=capturing_hotkey?std::string(i18n::text("Press a key... (Esc cancels)")):hotkey_name(value.hotkey);
     if(ImGui::Button((label+"###overlay-hotkey").c_str(),{-1,0})) {
@@ -654,6 +642,26 @@ void draw_options(Session& session,bool focus=false) {
         for(unsigned i=0;i<capture_keys.size();++i) capture_keys[i]=(GetAsyncKeyState(static_cast<int>(i))&0x8000)!=0;
     }
     ImGui::TextDisabled("%s",i18n::text("Ctrl / Alt / Shift combinations supported."));
+
+    section("Chart View");
+    ImGui::TextUnformatted(i18n::text("Default measures per column"));
+    ImGui::SetNextItemWidth(-1);
+    changed|=ImGui::SliderInt("##default-column-measures",&value.chart_column_measures,1,12,i18n::text("%d measures / column"),ImGuiSliderFlags_AlwaysClamp);
+    changed|=ImGui::Checkbox(i18n::label("Follow playback"),&value.follow_playback);
+
+    section("Loop buffer");
+    if(ImGui::BeginTable("##loop-buffers",2,ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(i18n::text("Start buffer (s)"));
+        ImGui::SetNextItemWidth(-1);
+        changed|=ImGui::InputFloat("##start-buffer",&value.loop_before,.5f,5.f,"%.2f");
+        ImGui::TableNextColumn();
+        ImGui::TextUnformatted(i18n::text("End buffer (s)"));
+        ImGui::SetNextItemWidth(-1);
+        changed|=ImGui::InputFloat("##end-buffer",&value.loop_after,.5f,5.f,"%.2f");
+        ImGui::EndTable();
+    }
+    ImGui::TextDisabled("%s",i18n::text("0 = no buffer. Clamped to the track."));
     if(capturing_hotkey) {
         const auto captured=captured_hotkey.exchange(0);
         if(captured==VK_ESCAPE) capturing_hotkey=false;
