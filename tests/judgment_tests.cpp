@@ -31,11 +31,34 @@ int main() {
         native[32]=2; observe_native(reinterpret_cast<std::uintptr_t>(native.data()));
         check(snapshot().timed_hits==3,"non-button ticks do not affect average press timing");
         observe_native(0); observe_native(1);
-        check(should_reset(true,false,true,19.f,true,20.f,19.f),"completed rewind resets counts");
-        check(!should_reset(true,true,true,19.f,true,20.f,19.f),"in-progress rewind preserves counts");
-        check(should_reset(false,false,true,20.f,true,20.f,19.f),"seek to IN resets counts");
-        check(should_reset(false,false,true,0.f,false,20.f,0.f),"seek to song start resets counts");
-        check(!should_reset(false,false,true,15.f,true,20.f,19.f),"ordinary seek preserves counts");
+        reset();
+        record(4,-.010f,true,10.f);
+        record(6,.030f,true,20.f);
+        restore(15.f);
+        s=snapshot();
+        check(s.counts[3]==1 && s.timed_hits==1 && std::abs(s.average_ms+10.)<.001,
+              "rewinding between two hits restores the earlier judgment and timing");
+        check(std::abs(s.absolute_average_ms-10.)<.001,"rewind restores absolute timing mean");
+        restore(30.f);
+        check(snapshot().counts[3]==1,"forward seek cannot resurrect discarded judgments");
+        record(2,.020f,true,20.f);
+        check(snapshot().counts[1]==1 && snapshot().counts[3]==1 && snapshot().timed_hits==2,
+              "replaying a note replaces its discarded judgment without accumulation");
+        restore(20.f);
+        check(snapshot().timed_hits==2,"same-position refresh preserves judgments at the cursor");
+        set_colors_swapped(true); set_s_critical_enabled(false);
+        restore(19.f); restore(15.f);
+        s=snapshot();
+        check(s.timed_hits==1 && s.colors_swapped && !s.s_critical_enabled && s.available,
+              "reverse frames restore history while preserving live display settings");
+        restore(9.f);
+        check(snapshot().timed_hits==0 && snapshot().counts==std::array<std::uint64_t,7>{},
+              "rewind before the first hit clears all judgment data");
+        restore(std::numeric_limits<float>::quiet_NaN());
+        record(10,0.f,false,12.f); restore(0.f);
+        check(snapshot().counts[6]==0,"rewind also removes automatic misses");
+        record(1,0.f,false,10.f); reset(); restore(20.f);
+        check(snapshot().counts==std::array<std::uint64_t,7>{},"track reset discards judgment history");
         reset(); record(4,-.010f,true); record(6,.010f,true); s=snapshot();
         check(std::abs(s.average_ms)<.001 && std::abs(s.absolute_average_ms-10.)<.001,
               "equal early and late timings cancel in signed mean but retain overall magnitude");

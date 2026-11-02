@@ -66,8 +66,7 @@ bool camera_updated{};
 MusicSelectRoute music_select_route;
 thread_local Ptr updating_world{}, drawing_world{};
 thread_local bool suppress_posteffects{};
-thread_local bool judgment_recording{}, judgment_seek{};
-thread_local float judgment_seek_target{};
+thread_local bool judgment_recording{};
 thread_local judgment_filter::Region judgment_region{};
 std::atomic<float> requested_rate{1.f};
 std::atomic<bool> feeder_seen{};
@@ -138,7 +137,6 @@ bool transport_seek(Ptr world, float target,bool seek_audio=true) {
     __try {
         const auto timer=field<Ptr>(world,216);
         if (!timer || !std::isfinite(target)) return false;
-        judgment_seek=true; judgment_seek_target=target;
         if(updating_world==world && current_world==world) suppress_posteffects=true;
         float delta=target-position(timer);
         fn<void(__fastcall*)(Ptr,const float*)>(native::addresses().timer_seek)(timer,&delta);
@@ -156,6 +154,7 @@ bool transport_seek(Ptr world, float target,bool seek_audio=true) {
             fn<void(__fastcall*)(Ptr,int)>(native::addresses().audio_seek)(field<Ptr>(world,184),static_cast<int>(target*1000.f));
         QueryPerformanceCounter(&last_qpc);
         if (seek_audio) ++flush_generation;
+        if(current_world==world) judgment::restore(target);
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -519,7 +518,7 @@ Ptr __fastcall judgment_event_hook(Ptr context,Ptr output,Ptr note,Ptr result,fl
             fn<judgment_filter::Failed>(native::addresses().gauge_failed),&suppressed);
     } else returned=original_judgment_event(context,output,note,result,time);
     if(!suppressed && judgment_recording && !suppress_posteffects && owned)
-        judgment::observe_native(result);
+        judgment::observe_native(result,position(field<Ptr>(updating_world,216)));
     return returned;
 }
 void __fastcall timer_update_hook(Ptr timer) {
@@ -549,14 +548,10 @@ void __fastcall timer_update_hook(Ptr timer) {
     original_timer_update(timer);
     GameBackend backend(world);
     const float cursor=state.reversing && reverse_player.owns_bus()?static_cast<float>(reverse_player.position()):position(timer);
-    judgment_seek=false;
     session.tick(cursor,field<std::uint8_t>(timer,16)==0,backend,static_cast<float>(elapsed));
     const auto after=session.snapshot();
     judgment_region={after.playing && after.enabled && after.loop,after.in,after.out};
     judgment_recording=after.playing && !after.paused && !after.rewinding && !after.reversing;
-    const float loop_start=after.loop?loop_range(after).start:0.f;
-    if(judgment::should_reset(state.rewinding,after.rewinding,judgment_seek,judgment_seek_target,
-                              after.loop,after.in,loop_start)) judgment::reset();
     if (session.suppress_result()) mark_tainted(world);
 }
 void __fastcall destroy_hook(Ptr world) {
