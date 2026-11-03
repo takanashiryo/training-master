@@ -34,7 +34,7 @@ Ptr NemsysController::transform(NemsysTransform original,Ptr args,Ptr output,boo
     if(!locked || !expected_vtable) { reset(); return original(args,output); }
     // The native helper reads two independent rotations from the view and a
     // third horizontal offset from the call arguments. Give it a temporary
-    // view with the captured values, without stopping the live animations.
+    // view with neutral camera inputs, without stopping the live animations.
     Ptr view_copy[10]{},call_args[3]{};
     std::uint32_t first[2]{},second[2]{};
     float horizontal{};
@@ -48,7 +48,7 @@ Ptr NemsysController::transform(NemsysTransform original,Ptr args,Ptr output,boo
                     const auto angle_a=field<float>(a,4),angle_b=field<float>(b,4),offset=field<float>(x,0);
                     if(bounded(angle_a) && bounded(angle_b) && bounded(offset)) {
                         if(!active_ || view_!=view) {
-                            view_=view; angle_a_=angle_a; angle_b_=angle_b; offset_=offset; active_=true;
+                            view_=view; angle_a_=angle_b_=offset_=0.f; active_=true;
                         }
                         std::memcpy(view_copy,reinterpret_cast<const void*>(view),sizeof(view_copy));
                         std::memcpy(first,reinterpret_cast<const void*>(a),sizeof(first));
@@ -83,7 +83,7 @@ double JudgeLineController::update(JudgeLineUpdate original,Ptr view,bool locked
                 const auto horizontal=field<float>(a,0),angle_a=field<float>(a,4),angle_b=field<float>(b,4);
                 if(bounded(horizontal) && bounded(angle_a) && bounded(angle_b)) {
                     if(!active_ || view_!=view) {
-                        view_=view; horizontal_=horizontal; angle_a_=angle_a; angle_b_=angle_b; active_=true;
+                        view_=view; horizontal_=angle_a_=angle_b_=0.f; active_=true;
                     }
                     std::memcpy(view_copy,reinterpret_cast<const void*>(view),sizeof(view_copy));
                     std::memcpy(first,reinterpret_cast<const void*>(a),sizeof(first));
@@ -113,7 +113,7 @@ Ptr CursorController::dispatch(CursorEvent original,Ptr view,Ptr events,bool loc
             if(a && b) {
                 const float x=field<float>(a,4),y=field<float>(a,8),z=field<float>(b,0);
                 if(bounded(x) && bounded(y) && bounded(z)) {
-                    if(!active_ || view_!=view) { view_=view; angles_={x,y,z}; active_=true; }
+                    if(!active_ || view_!=view) { view_=view; angles_={}; active_=true; }
                     std::memcpy(view_copy,reinterpret_cast<const void*>(view),sizeof(view_copy));
                     std::memcpy(first,reinterpret_cast<const void*>(a),sizeof(first));
                     std::memcpy(first+1,&angles_[0],sizeof(float));
@@ -162,9 +162,9 @@ bool VisualController::begin(Ptr view,Ptr expected_vtable,VisualView kind,Visual
             a=field<float>(second,0); b=field<float>(second,4); c=field<float>(second,16);
             if(!bounded(a) || !bounded(b) || !bounded(c)) return false;
         }
-        const auto frozen_first=capture_source(first_sources_,first,std::array<float,2>{x,y});
+        const auto frozen_first=capture_source(first_sources_,first,std::array<float,2>{});
         if(!frozen_first) return false;
-        const auto frozen_second=second?capture_source(second_sources_,second,std::array<float,3>{a,b,c}):nullptr;
+        const auto frozen_second=second?capture_source(second_sources_,second,std::array<float,3>{}):nullptr;
         if(second && !frozen_second) return false;
         lease.view=view; lease.first_offset=first_offset; lease.second_offset=second_offset;
         lease.first_original=first; lease.second_original=second;
@@ -200,7 +200,10 @@ bool VisualController::end(VisualLease& lease) {
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 void Controller::configure(Layout layout) { layout_=layout; reset(); }
-void Controller::reset() { binding_={}; frozen_={}; native_={}; cursor_saved_={}; active_=borrowed_=faulted_=cursor_borrowed_=false; }
+void Controller::reset() {
+    binding_=default_binding_={}; frozen_=native_=cursor_saved_=default_pose_={};
+    active_=borrowed_=faulted_=cursor_borrowed_=default_ready_=false;
+}
 bool Controller::bind(Ptr world,Binding& result) const {
     if (!world || !layout_.world_vtable || !layout_.rebuild || !layout_.set_view) return false;
     __try {
@@ -250,12 +253,20 @@ bool Controller::available(Ptr world) const {
 }
 bool Controller::before_update(Ptr world) {
     if (faulted_) return false;
-    if (!borrowed_) return true;
     Binding current;
     if (!bind(world,current)) { active_=borrowed_=false; faulted_=true; return false; }
-    if (current!=binding_) { active_=borrowed_=false; return true; }
-    borrowed_=false;
-    if (!write(current,native_)) { active_=false; faulted_=true; return false; }
+    if(borrowed_) {
+        borrowed_=false;
+        if(current==binding_) {
+            if(!write(current,native_)) { active_=false; faulted_=true; return false; }
+        } else active_=false;
+    }
+    // WorldUpdate calls this before native timer/angle/camera updates, including
+    // while training is off. Never capture a song's animated pose at lock time.
+    if(!default_ready_ || current!=default_binding_) {
+        if(!read(current,default_pose_)) { faulted_=true; return false; }
+        default_binding_=current; default_ready_=true;
+    }
     return true;
 }
 bool Controller::after_update(Ptr world,bool locked) {
@@ -263,7 +274,8 @@ bool Controller::after_update(Ptr world,bool locked) {
     if (!locked) { active_=false; return true; }
     Binding current; Pose pose;
     if (!bind(world,current) || !read(current,pose)) { active_=false; faulted_=true; return false; }
-    if (!active_ || current!=binding_) { binding_=current; frozen_=pose; active_=true; }
+    if(!default_ready_ || current!=default_binding_) { active_=false; faulted_=true; return false; }
+    if (!active_ || current!=binding_) { binding_=current; frozen_=default_pose_; active_=true; }
     native_=pose;
     // CameraUpdater writes the native VOL slam impulse to the second camera
     // space's X position. Preserve that transient feedback while keeping the

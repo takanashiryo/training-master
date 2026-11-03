@@ -121,6 +121,7 @@ bool compute(const Fixture& f) {
 }
 void run(Layout layout) {
     Fixture f(layout); Controller control; control.configure(layout);
+    check(control.before_update(f.w),"default camera pose must be recorded before native animation");
     check(control.available(f.w),"validated camera graph must be available, including negative integer centers");
     check(compute(f),"native camera matrix computation failed");
     const auto frozen_root=f.root,frozen_child=f.child;
@@ -145,11 +146,13 @@ void run(Layout layout) {
           "unlock must restore current native pose, including after all events have stopped");
     f.animate(250); check(compute(f),"unlocked computation failed");
     check(control.after_update(f.w,true),"re-lock failed");
+    check(at<float>(f.e,424)==12.f && at<float>(f.p,216)==3.f,
+          "enabling lock after camera motion must reset the displayed pose to the track default");
     check(control.before_update(f.w),"pre-update for seek failed");
     f.animate(10); check(compute(f),"seek camera computation failed");
-    check(control.after_update(f.w,true) && at<float>(f.e,424)==74.5f,"seek must preserve the locked displayed pose");
+    check(control.after_update(f.w,true) && at<float>(f.e,424)==12.f,"seek must preserve the default locked displayed pose");
     check(control.before_update(f.w) && at<float>(f.e,424)==14.5f,"native pose must follow seek behind the locked view");
-    control.reset(); check(control.after_update(f.w,true),"next track capture failed");
+    control.reset(); check(control.before_update(f.w) && control.after_update(f.w,true),"next track capture failed");
     check(control.before_update(f.w),"cleanup restore failed");
     at<Ptr>(f.q,8)=0;
     check(!control.available(f.w),"changed camera parent graph must be rejected");
@@ -161,6 +164,7 @@ void run(Layout layout) {
 }
 void slam_shake_regression(Layout layout) {
     Fixture f(layout); Controller control; control.configure(layout);
+    check(control.before_update(f.w),"default camera setup for slam shake failed");
     check(compute(f) && control.after_update(f.w,true),"camera lock setup for slam shake failed");
     const float root_x=at<float>(f.p,216),angle=at<float>(f.e,424);
     for(float shake:{2.f,-.5f,0.f}) {
@@ -194,14 +198,14 @@ void nemsys_regression() {
     const auto call=[&](bool locked) { controller.transform(observe_nemsys,reinterpret_cast<Ptr>(args),reinterpret_cast<Ptr>(&sample),locked,vtable); };
     call(true); at<float>(pa,4)=20; at<float>(pb,4)=30; x=40;
     call(true);
-    check(sample.a==2 && sample.b==3 && sample.x==4,"NEMSYS rotation and offset must remain fixed while the camera is locked");
+    check(sample.a==0 && sample.b==0 && sample.x==0,"NEMSYS rotation and offset must reset to neutral while the camera is locked");
     check(at<float>(pa,4)==20 && at<float>(pb,4)==30 && x==40,"NEMSYS native animation values must remain untouched");
     call(false); check(sample.a==20 && sample.b==30 && sample.x==40,"unlock must restore live NEMSYS motion");
-    call(true); check(sample.a==20 && sample.b==30 && sample.x==40,"re-lock must capture the latest position");
+    call(true); check(sample.a==0 && sample.b==0 && sample.x==0,"re-lock must restore neutral NEMSYS inputs");
     at<Ptr>(p,0)=vtable+1; at<float>(pa,4)=21;
     call(true); check(sample.a==21,"unrecognized view must keep native behavior");
     at<Ptr>(p,0)=vtable; at<float>(pa,4)=22;
-    call(true); check(sample.a==22,"reidentified view must capture a fresh pose");
+    call(true); check(sample.a==0,"reidentified view must use the neutral pose");
 }
 NemsysSample judge_line_sample{};
 double __fastcall observe_judge_line(Ptr view) {
@@ -221,13 +225,13 @@ void judge_line_regression() {
     check(call(true)==42.,"judge-line update return value must pass through");
     at<float>(pa,0)=10; at<float>(pa,4)=20; at<float>(pb,4)=30;
     call(true);
-    check(judge_line_sample.a==3 && judge_line_sample.b==2 && judge_line_sample.x==1,
-          "judge line and base must remain fixed while camera is locked");
+    check(judge_line_sample.a==0 && judge_line_sample.b==0 && judge_line_sample.x==0,
+          "judge line and base must reset to neutral while camera is locked");
     check(at<float>(pa,0)==10 && at<float>(pa,4)==20 && at<float>(pb,4)==30,
           "freezing the judge line must not stop native angle updates");
     call(false); check(judge_line_sample.a==30 && judge_line_sample.b==20 && judge_line_sample.x==10,
           "unlock must restore the live judge line and base");
-    call(true); at<float>(pa,0)=11; call(true); check(judge_line_sample.x==10,"re-lock must capture the latest pose");
+    call(true); at<float>(pa,0)=11; call(true); check(judge_line_sample.x==0,"re-lock must restore the neutral pose");
     at<Ptr>(p,0)=vtable+1; call(true); check(judge_line_sample.x==11,"unknown view must use native behavior");
 }
 struct CursorSample { float root,a,b,c; Ptr events; };
@@ -240,6 +244,7 @@ Ptr __fastcall observe_cursor(Ptr view,Ptr events) {
 }
 void cursor_effect_regression(Layout layout) {
     Fixture f(layout); Controller camera; camera.configure(layout);
+    check(camera.before_update(f.w),"default camera setup for cursor effects failed");
     check(compute(f) && camera.after_update(f.w,true),"cursor effect camera setup failed");
     const float frozen_root=at<float>(f.p,240);
     check(camera.before_update(f.w),"cursor event native camera restore failed");
@@ -264,8 +269,8 @@ void cursor_effect_regression(Layout layout) {
     check(at<float>(f.p,240)==live_root,"cursor event must restore the advancing native camera");
     at<float>(pa,4)=10; at<float>(pa,8)=20; at<float>(pb,0)=30;
     dispatch(true);
-    check(cursor_sample.a==1 && cursor_sample.b==2 && cursor_sample.c==3,
-          "cursor effect rotation must stay fixed while the inputs continue to move");
+    check(cursor_sample.a==0 && cursor_sample.b==0 && cursor_sample.c==0,
+          "cursor effect rotation must stay neutral while the inputs continue to move");
     dispatch(false);
     check(cursor_sample.root==live_root && cursor_sample.a==10 && cursor_sample.b==20 && cursor_sample.c==30,
           "unlock must restore native cursor effect direction");
@@ -285,29 +290,29 @@ void visual_layers_regression() {
     a[0]=19.f; a[1]=11.f; a[2]=12.f; b[0]=13.f; b[1]=14.f; b[4]=17.f;
     check(control.begin(np,table,VisualView::Nemsys,lease),"NEMSYS layer inputs must be borrowed");
     const auto na=at<Ptr>(np,56),nb=at<Ptr>(np,72);
-    check(at<float>(na,0)==19.f && at<float>(na,4)==1.f && at<float>(na,8)==2.f &&
-          at<float>(nb,0)==3.f && at<float>(nb,4)==4.f && at<float>(nb,16)==7.f,
-          "NEMSYS knob indicators must retain all camera-controlled layer inputs");
+    check(at<float>(na,0)==19.f && at<float>(na,4)==0.f && at<float>(na,8)==0.f &&
+          at<float>(nb,0)==0.f && at<float>(nb,4)==0.f && at<float>(nb,16)==0.f,
+          "NEMSYS knob indicators must use neutral camera inputs while preserving other values");
     at<int>(np,24)=42;
     check(control.end(lease) && at<int>(np,24)==42 && a[1]==11.f && b[4]==17.f,
           "NEMSYS timer and native sources must remain live");
     check(control.begin(bp,table,VisualView::ButtonBomb,lease),"button judgment visuals must be borrowed");
-    check(at<float>(at<Ptr>(bp,256),4)==1.f && at<float>(at<Ptr>(bp,256),8)==2.f,
-          "button judgment effects must use the same locked angles");
+    check(at<float>(at<Ptr>(bp,256),4)==0.f && at<float>(at<Ptr>(bp,256),8)==0.f,
+          "button judgment effects must use neutral angles");
     check(control.end(lease) && at<Ptr>(bp,256)==ap,"button effects must restore original sources");
     check(control.begin(kp,table,VisualView::KnobBomb,lease),"knob judgment visuals must be borrowed");
-    check(at<float>(at<Ptr>(kp,464),4)==1.f && at<float>(at<Ptr>(kp,480),0)==3.f,
-          "knob judgment effects must use the same locked angles");
+    check(at<float>(at<Ptr>(kp,464),4)==0.f && at<float>(at<Ptr>(kp,480),0)==0.f,
+          "knob judgment effects must use neutral angles");
     check(control.end(lease) && at<Ptr>(kp,464)==ap && at<Ptr>(kp,480)==sp,"knob effects must restore original sources");
     std::array<float,3> alternate{0.f,31.f,32.f};
     at<Ptr>(bp,256)=reinterpret_cast<Ptr>(alternate.data());
     check(control.begin(bp,table,VisualView::ButtonBomb,lease) && control.end(lease),"alternate effect source must be captured");
     check(control.begin(np,table,VisualView::Nemsys,lease),"returning to the NEMSYS source must succeed");
-    check(at<float>(at<Ptr>(np,56),4)==1.f && at<float>(at<Ptr>(np,56),8)==2.f,
-          "interleaved effect views must not overwrite each other's frozen camera angles");
+    check(at<float>(at<Ptr>(np,56),4)==0.f && at<float>(at<Ptr>(np,56),8)==0.f,
+          "interleaved effect views must keep neutral camera angles");
     check(control.end(lease),"interleaved source restore failed");
-    control.reset(); check(control.begin(np,table,VisualView::Nemsys,lease) && at<float>(at<Ptr>(np,56),4)==11.f,
-          "re-lock must capture current camera inputs");
+    control.reset(); check(control.begin(np,table,VisualView::Nemsys,lease) && at<float>(at<Ptr>(np,56),4)==0.f,
+          "re-lock must restore neutral camera inputs");
     check(control.end(lease),"visual source cleanup failed");
 }
 // Execute the actual 1013 cursor event handler with isolated graphics stubs.
@@ -345,6 +350,7 @@ void native_cursor_indicator(Layout layout,Ptr image) {
     NativeIatPatch find(image+0x884aa8,reinterpret_cast<Ptr>(native_cursor_find));
     NativeIatPatch next(image+0x884a40,reinterpret_cast<Ptr>(native_cursor_next));
     Fixture f(layout); Controller camera; camera.configure(layout);
+    check(camera.before_update(f.w),"default camera setup for native cursor failed");
     // The real engine constructor provides this projection matrix. The compact
     // fixture does not run that constructor, so initialize a valid identity.
     for(unsigned i=0;i<4;++i) at<float>(f.e,204+i*20)=1.f;
@@ -482,6 +488,7 @@ void native_knob_bomb_lifetime(Layout layout,Ptr image) {
 }
 void native_descendant(Layout layout) {
     Fixture f(layout); Controller control; control.configure(layout);
+    check(control.before_update(f.w),"default camera setup for native projection failed");
     f.lane.fill(0);
     const Ptr note=reinterpret_cast<Ptr>(f.lane.data());
     at<Ptr>(note,0)=layout.space_vtable; at<Ptr>(note,8)=f.q;
