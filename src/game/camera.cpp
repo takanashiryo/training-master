@@ -170,12 +170,17 @@ bool VisualController::begin(Ptr view,Ptr expected_vtable,VisualView kind,Visual
         lease.first_original=first; lease.second_original=second;
         std::memcpy(lease.first.data(),reinterpret_cast<const void*>(first),sizeof(lease.first));
         std::memcpy(lease.first.data()+1,&frozen_first->angles[0],sizeof(float));
-        std::memcpy(lease.first.data()+2,&frozen_first->angles[1],sizeof(float));
+        if(kind!=VisualView::Nemsys)
+            std::memcpy(lease.first.data()+2,&frozen_first->angles[1],sizeof(float));
         if(second) {
             std::memcpy(lease.second.data(),reinterpret_cast<const void*>(second),sizeof(lease.second));
-            std::memcpy(lease.second.data(),&frozen_second->angles[0],sizeof(float));
             std::memcpy(lease.second.data()+1,&frozen_second->angles[1],sizeof(float));
-            std::memcpy(lease.second.data()+4,&frozen_second->angles[2],sizeof(float));
+            // NEMSYS reads only +4 as rotation; +16 is the opacity applied to
+            // its frame, buttons and VOL clips. Keep all other inputs live.
+            if(kind!=VisualView::Nemsys) {
+                std::memcpy(lease.second.data(),&frozen_second->angles[0],sizeof(float));
+                std::memcpy(lease.second.data()+4,&frozen_second->angles[2],sizeof(float));
+            }
         }
         lease.active=true;
         field<Ptr>(view,first_offset)=reinterpret_cast<Ptr>(lease.first.data());

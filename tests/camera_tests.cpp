@@ -290,9 +290,9 @@ void visual_layers_regression() {
     a[0]=19.f; a[1]=11.f; a[2]=12.f; b[0]=13.f; b[1]=14.f; b[4]=17.f;
     check(control.begin(np,table,VisualView::Nemsys,lease),"NEMSYS layer inputs must be borrowed");
     const auto na=at<Ptr>(np,56),nb=at<Ptr>(np,72);
-    check(at<float>(na,0)==19.f && at<float>(na,4)==0.f && at<float>(na,8)==0.f &&
-          at<float>(nb,0)==0.f && at<float>(nb,4)==0.f && at<float>(nb,16)==0.f,
-          "NEMSYS knob indicators must use neutral camera inputs while preserving other values");
+    check(at<float>(na,0)==19.f && at<float>(na,4)==0.f && at<float>(na,8)==12.f &&
+          at<float>(nb,0)==13.f && at<float>(nb,4)==0.f && at<float>(nb,16)==17.f,
+          "NEMSYS must neutralize its two rotations while preserving opacity and other live inputs");
     at<int>(np,24)=42;
     check(control.end(lease) && at<int>(np,24)==42 && a[1]==11.f && b[4]==17.f,
           "NEMSYS timer and native sources must remain live");
@@ -308,7 +308,7 @@ void visual_layers_regression() {
     at<Ptr>(bp,256)=reinterpret_cast<Ptr>(alternate.data());
     check(control.begin(bp,table,VisualView::ButtonBomb,lease) && control.end(lease),"alternate effect source must be captured");
     check(control.begin(np,table,VisualView::Nemsys,lease),"returning to the NEMSYS source must succeed");
-    check(at<float>(at<Ptr>(np,56),4)==0.f && at<float>(at<Ptr>(np,56),8)==0.f,
+    check(at<float>(at<Ptr>(np,56),4)==0.f && at<float>(at<Ptr>(np,56),8)==12.f,
           "interleaved effect views must keep neutral camera angles");
     check(control.end(lease),"interleaved source restore failed");
     control.reset(); check(control.begin(np,table,VisualView::Nemsys,lease) && at<float>(at<Ptr>(np,56),4)==0.f,
@@ -341,6 +341,84 @@ struct NativeIatPatch {
         DWORD old{},ignored{}; if(VirtualProtect(slot,sizeof(Ptr),PAGE_READWRITE,&old)) { *slot=original; VirtualProtect(slot,sizeof(Ptr),old,&ignored); }
     }
 };
+using NativeMatrix2d=std::array<float,6>;
+struct NativeNemsysLayer {
+    Ptr table{};
+    int handle{1};
+    float alpha{-1.f};
+};
+void __fastcall native_nemsys_angle(Ptr,float) {}
+void __fastcall native_nemsys_position(Ptr,int,int) {}
+void __fastcall native_nemsys_alpha(Ptr layer,float alpha) {
+    reinterpret_cast<NativeNemsysLayer*>(layer)->alpha=alpha;
+}
+Ptr __fastcall native_nemsys_dimensions(Ptr,Ptr output) {
+    at<int>(output,0)=1080; at<int>(output,4)=1920; return output;
+}
+Ptr __fastcall native_nemsys_view(Ptr provider,Ptr output) {
+    at<Ptr>(output,0)=provider; at<Ptr>(output,8)=0; return output;
+}
+Ptr __fastcall native_nemsys_rotation(Ptr output,Ptr input,float) {
+    std::memcpy(reinterpret_cast<void*>(output),reinterpret_cast<const void*>(input),sizeof(NativeMatrix2d));
+    return output;
+}
+Ptr __fastcall native_nemsys_translation(Ptr output,Ptr input,Ptr) {
+    return native_nemsys_rotation(output,input,0.f);
+}
+Ptr __fastcall native_nemsys_multiply(Ptr output,Ptr input,Ptr) {
+    return native_nemsys_rotation(output,input,0.f);
+}
+void __fastcall native_nemsys_get_matrix(int,NativeMatrix2d* output) { *output={1,0,0,1,0,0}; }
+void __fastcall native_nemsys_set_matrix(int,const NativeMatrix2d*) {}
+// Execute the actual view update: all nine frame/button/VOL clips receive
+// their opacity from the shared input. Graphics calls are isolated stubs.
+void native_nemsys_visibility(Ptr image) {
+    if(training::native::addresses().camera_update!=0x43cac0) return;
+    NativeIatPatch rotation(image+0x884ab8,reinterpret_cast<Ptr>(native_nemsys_rotation));
+    NativeIatPatch translation(image+0x884ac0,reinterpret_cast<Ptr>(native_nemsys_translation));
+    NativeIatPatch multiply(image+0x884ac8,reinterpret_cast<Ptr>(native_nemsys_multiply));
+    NativeIatPatch get_matrix(image+0x884a80,reinterpret_cast<Ptr>(native_nemsys_get_matrix));
+    NativeIatPatch set_matrix(image+0x884a78,reinterpret_cast<Ptr>(native_nemsys_set_matrix));
+    std::array<Ptr,28> layer_table{};
+    layer_table[9]=reinterpret_cast<Ptr>(native_nemsys_position);
+    layer_table[10]=reinterpret_cast<Ptr>(native_nemsys_angle);
+    layer_table[27]=reinterpret_cast<Ptr>(native_nemsys_alpha);
+    std::array<NativeNemsysLayer,9> layers{};
+    for(auto& layer:layers) layer.table=reinterpret_cast<Ptr>(layer_table.data());
+    std::array<Ptr,8> provider_table{};
+    provider_table[2]=reinterpret_cast<Ptr>(native_nemsys_view);
+    provider_table[5]=provider_table[7]=reinterpret_cast<Ptr>(native_nemsys_dimensions);
+    Ptr provider=reinterpret_cast<Ptr>(provider_table.data());
+    Ptr proxy[]{0,reinterpret_cast<Ptr>(&provider)};
+    alignas(8) std::array<std::byte,280> storage{};
+    const Ptr view=reinterpret_cast<Ptr>(storage.data());
+    // This fixture is only for the audited 1013 layout, as above.
+    constexpr Ptr table=0x4545;
+    at<Ptr>(view,0)=table;
+    at<Ptr>(view,32)=reinterpret_cast<Ptr>(&layers[0]);
+    for(unsigned i=1;i<=6;++i) at<Ptr>(view,88+i*16)=reinterpret_cast<Ptr>(&layers[i]);
+    at<Ptr>(view,216)=reinterpret_cast<Ptr>(&layers[7]);
+    at<Ptr>(view,232)=reinterpret_cast<Ptr>(&layers[8]);
+    at<Ptr>(view,48)=reinterpret_cast<Ptr>(proxy);
+    at<float>(view,20)=at<float>(view,24)=-1.f; // No pending VOL notice.
+    std::array<float,3> first{0,1,2};
+    std::array<float,5> second{3,4,5,6,1};
+    at<Ptr>(view,56)=reinterpret_cast<Ptr>(first.data());
+    at<Ptr>(view,72)=reinterpret_cast<Ptr>(second.data());
+    const auto update=reinterpret_cast<void(__fastcall*)(Ptr)>(image+0x428ad0);
+    VisualController control; VisualLease lease;
+    for(float alpha:{1.f,.5f,0.f,1.f}) {
+        second[4]=alpha;
+        update(view);
+        for(const auto& layer:layers) check(layer.alpha==alpha,"unlocked native NEMSYS opacity mismatch");
+        check(control.begin(view,table,VisualView::Nemsys,lease),"native NEMSYS camera inputs unavailable");
+        update(view);
+        check(control.end(lease),"native NEMSYS camera inputs restore failed");
+        for(const auto& layer:layers)
+            check(layer.alpha==alpha,"locking the camera makes native NEMSYS frame/button/VOL clips invisible");
+        check(second[4]==alpha,"locking the camera must preserve the live NEMSYS opacity source");
+    }
+}
 void native_cursor_indicator(Layout layout,Ptr image) {
     // This fixture is tied to the IDA-audited 1013 callback; other versions
     // still run the portable layer tests and native camera-matrix regression.
@@ -534,7 +612,7 @@ int wmain(int argc,wchar_t** argv) {
         judge_line_regression();
         cursor_effect_regression(layout);
         visual_layers_regression();
-        if(module) { native_descendant(layout); native_shake_regression(reinterpret_cast<Ptr>(module)); native_cursor_indicator(layout,reinterpret_cast<Ptr>(module)); native_knob_bomb_lifetime(layout,reinterpret_cast<Ptr>(module)); }
+        if(module) { native_nemsys_visibility(reinterpret_cast<Ptr>(module)); native_descendant(layout); native_shake_regression(reinterpret_cast<Ptr>(module)); native_cursor_indicator(layout,reinterpret_cast<Ptr>(module)); native_knob_bomb_lifetime(layout,reinterpret_cast<Ptr>(module)); }
         if(module) FreeLibrary(module);
         std::cout<<"240 animated frames, native matrix freeze/restore, seek, re-lock and graph guards passed\n";
         return 0;
