@@ -15,6 +15,8 @@ struct Layout {
 };
 // Game-thread owner. The chart's raw timing/notes are never modified. A native
 // rebuild owns its new display objects, including the uniform timing calculator.
+// Lock fixes the chart timing while manual HiSpeed changes remain live. Native
+// BPM/scroll changes continue behind the display and are restored on unlock.
 class Controller {
 public:
     void configure(Layout);
@@ -34,10 +36,9 @@ private:
     bool read_params(const Binding&,float*) const;
     bool write_params(const Binding&,const float*) const;
     bool rebuild(const Binding&);
-    bool capture_bpm(const Binding&,float&) const;
     Layout layout_{};
     Binding binding_{};
-    float frozen_[3]{},native_[3]{},bpm_{};
+    float display_[3]{},native_[3]{},bpm_{};
     bool active_{},borrowed_{};
 };
 }

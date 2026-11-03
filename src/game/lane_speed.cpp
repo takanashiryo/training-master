@@ -49,39 +49,13 @@ bool Controller::write_params(const Binding& b,const float* values) const {
     __try { std::memcpy(reinterpret_cast<void*>(b.params),values,12); return true; }
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
-bool Controller::capture_bpm(const Binding& b,float& value) const {
-    __try {
-        const auto bounds=field<Vector>(b.calculator,0);
-        if(!bounds.begin || bounds.end<=bounds.begin || bounds.capacity<bounds.end ||
-           (bounds.end-bounds.begin)%20 || (bounds.end-bounds.begin)/20>100000) return false;
-        const Ptr offset=field<Ptr>(b.draw,24);
-        if(!offset) return false;
-        const float time=static_cast<float>(field<std::int64_t>(b.draw,56)*1e-9)+field<float>(offset,0);
-        if(!std::isfinite(time)) return false;
-        float previous{},first{};
-        float last_time=-std::numeric_limits<float>::infinity();
-        const bool fixed=field<unsigned char>(b.calculator,24)!=0;
-        for(Ptr p=bounds.begin;p<bounds.end;p+=20) {
-            const float t=field<float>(p,0),bpm=fixed?100.f:field<float>(p,4)*field<float>(p,12);
-            if(!std::isfinite(t) || t<last_time || !std::isfinite(bpm)) return false;
-            last_time=t;
-            if(!field<unsigned char>(p,8) && positive(bpm)) {
-                if(!first) first=bpm;
-                if(t<=time) previous=bpm;
-            }
-        }
-        // Enabling inside a stop borrows the preceding moving speed, never zero.
-        value=previous?previous:first;
-        return positive(value);
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
-}
 bool Controller::available(Ptr world,const char** reason) const {
-    Binding b; float params[3],bpm;
+    Binding b; float params[3];
     if(!bind(world,b,reason)) return false;
     if(reason) *reason="invalid HiSpeed display parameters";
     if(!read_params(b,params)) return false;
-    if(reason) *reason="invalid or unavailable display timing";
-    if(!capture_bpm(b,bpm)) return false;
+    if(reason) *reason="invalid configured Lane Speed";
+    if(!positive(params[1]/params[0])) return false;
     if(reason) *reason="ready";
     return true;
 }
@@ -126,7 +100,13 @@ bool Controller::after_update(Ptr world) {
     if(!active_) return true;
     Binding current;
     if(!bind(world,current) || current.params!=binding_.params || !read_params(current,native_)) return false;
-    if(!write_params(current,frozen_)) return false;
+    // Only the chart's timing map is fixed. HispUpdater may change the user's
+    // configured speed on any frame; apply it to the same uniform map without
+    // rebuilding notes or retaining the old user setting. Song events only
+    // change native_[2], which must not affect this displayed speed.
+    display_[0]=native_[1]/bpm_;
+    display_[1]=display_[2]=native_[1];
+    if(!positive(display_[0]) || !write_params(current,display_)) return false;
     borrowed_=true; return true;
 }
 bool Controller::matches_updater(Ptr updater,bool event_interface) const {
@@ -139,8 +119,14 @@ bool Controller::set_locked(Ptr world,bool locked) {
     Binding b;
     if(!before_update(world) || !bind(world,b)) return false;
     if(locked) {
-        if(!read_params(b,frozen_) || !capture_bpm(b,bpm_)) return false;
-        std::memcpy(native_,frozen_,sizeof(native_)); binding_=b;
+        if(!read_params(b,native_)) return false;
+        // HispUpdater keeps multiplier (+0), configured speed (+4), and actual
+        // BPM/scroll-adjusted speed (+8) separately. Recover the user's reference
+        // BPM from configured speed / multiplier. Keep this timing reference
+        // fixed while later manual HiSpeed changes update the display multiplier.
+        bpm_=native_[1]/native_[0];
+        if(!positive(bpm_)) return false;
+        binding_=b;
     }
     active_=locked;
     if(!rebuild(b)) return false;

@@ -132,7 +132,8 @@ bool native_note(Ptr method,Ptr note,Ptr values) {
     __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 void run(Layout layout,Ptr range_method=0,Ptr button_method=0) {
-    Fixture f(layout); const auto raw=f.segments; const auto frozen=f.params;
+    Fixture f(layout); const auto raw=f.segments;
+    const float reference_bpm=f.params[1]/f.params[0];
     const char* reason{};
     check(f.controller.available(f.w,&reason) && std::string_view(reason)=="ready","valid speed graph must be available");
     if(native_player_interface) {
@@ -154,7 +155,8 @@ void run(Layout layout,Ptr range_method=0,Ptr button_method=0) {
         check(f.controller.before_update(f.w),"restore native params");
         f.time(time); f.params[0]=1.f+time; f.params[1]=200.f+time; f.params[2]=100.f+time;
         const auto native=f.params; check(f.controller.after_update(f.w),"fixed params apply");
-        check(std::memcmp(f.params.data(),frozen.data(),12)==0 && f.params[3]==123.f,"only three display floats may be borrowed");
+        check(f.params[0]==native[1]/reference_bpm && f.params[1]==native[1] && f.params[2]==native[1] && f.params[3]==123.f,
+              "manual HiSpeed changes must immediately reach the display without changing unrelated values");
         const float a=evaluate(f.map(),time),b=evaluate(f.map(),time+1),c=evaluate(f.map(),time+2);
         check(std::fabs((b-a)-1600.f)<.02f && std::fabs((c-b)-1600.f)<.02f,
               "BT/FX/VOL coordinates must advance uniformly through BPM, scroll-factor and stop boundaries");
@@ -163,7 +165,7 @@ void run(Layout layout,Ptr range_method=0,Ptr button_method=0) {
             reinterpret_cast<float*(__fastcall*)(Ptr,float*)>(range_method)(ptr(f.range),values.data());
             const float note_distance=evaluate(f.map(),time+.5f);
             const float normalized=(note_distance-values[1])/(values[2]-values[1]);
-            check(std::fabs(normalized-800.f*3.f/3400.f)<.001f,"native DrawRange must use the frozen HiSpeed multiplier");
+            check(std::fabs(normalized-800.f*f.params[0]/3400.f)<.001f,"native DrawRange must use the latest manual HiSpeed multiplier");
             // Native ButtonNote consumes the same mapped coordinate as the long/laser display pipeline.
             alignas(16) std::array<unsigned char,144> note{}; std::array<Ptr,3> sink_vtable{0,0,reinterpret_cast<Ptr>(render_sink)};
             const Ptr sink=ptr(sink_vtable); Ptr sink_object=sink;
@@ -179,17 +181,48 @@ void run(Layout layout,Ptr range_method=0,Ptr button_method=0) {
     check(evaluate(f.map(),11)==evaluate(f.map(),10) && evaluate(f.map(),9)-evaluate(f.map(),8)==1600,
           "native BPM and stop behavior must return on unlock");
     f.time(15); check(f.controller.set_locked(f.w,true),"re-lock");
-    check(std::fabs(evaluate(f.map(),16)-evaluate(f.map(),15)-320.f)<.02f,"re-lock must capture the current BPM times scroll factor");
+    check(std::fabs((evaluate(f.map(),16)-evaluate(f.map(),15))*f.params[0]-f.params[1]*8.f)<.02f,
+          "re-lock must use the latest configured speed instead of the current BPM times scroll factor");
     std::array<unsigned char,40> updater{}; at<Ptr>(ptr(updater),16)=f.p;
     check(f.controller.matches_updater(ptr(updater),false) && f.controller.matches_updater(ptr(updater)+8,true),"match primary/secondary Hisp interfaces");
     f.controller.release(f.w); check(f.builds==3 && !f.controller.matches_updater(ptr(updater),false),"teardown must restore ownership without rebuilding dying notes");
     Fixture stopped(layout); stopped.time(11);
-    check(stopped.controller.set_locked(stopped.w,true) && evaluate(stopped.map(),2)==3200,"a stop must borrow the preceding moving speed");
+    check(stopped.controller.set_locked(stopped.w,true) && evaluate(stopped.map(),2)==3200,"enabling inside a stop must restore the configured speed");
     stopped.controller.release(stopped.w);
     Fixture broken(layout); broken.fail_build=true;
     check(!broken.controller.set_locked(broken.w,true) && !broken.loads && !broken.destroys,"failed construction must not load or destroy an absent result");
     broken.controller.release(broken.w);
     at<Ptr>(broken.w,168)=1; check(!broken.controller.available(broken.w),"invalid native context must fail safely");
+}
+void configured_speed_regression(Layout layout) {
+    // Native segments include a speedup, stop, and a slow scroll section.
+    // Lock must return to HiSpeed 600 in each, including first enabling late.
+    for(float time:{1.f,8.f,11.f,15.f}) {
+        Fixture f(layout); f.time(time);
+        f.params[2]=time<5?300.f:time<10?600.f:time<12?0.f:120.f;
+        const auto native=f.params;
+        check(f.controller.set_locked(f.w,true),"configured speed lock must work in every song speed phase");
+        check(f.params[0]==native[0] && f.params[1]==600.f && f.params[2]==600.f,
+              "enabling lock must preserve the user's multiplier/setting and restore the actual speed display");
+        const float velocity=(evaluate(f.map(),time+1)-evaluate(f.map(),time))*f.params[0];
+        check(std::fabs(velocity-600.f*8.f)<.02f,"locked note movement must match configured HiSpeed 600 after any song speed change");
+        check(f.controller.before_update(f.w) && f.params==native,"native speed phase must remain available behind the locked display");
+        // Simulate the real HispUpdater input path followed by a song event:
+        // manual input changes +0/+4; chart speed changes only update +8.
+        f.params[0]=3.5f; f.params[1]=700.f; f.params[2]=native[2]*(700.f/600.f);
+        const auto manual=f.params;
+        check(f.controller.after_update(f.w) && f.params[0]==3.5f && f.params[1]==700.f && f.params[2]==700.f,
+              "manual adjustment from 600 to 700 must immediately update locked speed and HUD");
+        const float adjusted_velocity=(evaluate(f.map(),time+1)-evaluate(f.map(),time))*f.params[0];
+        check(std::fabs(adjusted_velocity-700.f*8.f)<.02f && f.builds==1,
+              "manual adjustment must change actual note movement without rebuilding the timing map");
+        check(f.controller.before_update(f.w) && f.params==manual,"native input must retain the latest manual setting");
+        f.params[2]=0.f; const auto song_stop=f.params;
+        check(f.controller.after_update(f.w) && f.params[0]==3.5f && f.params[2]==700.f,
+              "a later automatic song speed change must not override the user's live HiSpeed");
+        check(f.controller.set_locked(f.w,false) && f.params==song_stop,"unlock must restore the native phase and retain the manual setting");
+        f.controller.release(f.w);
+    }
 }
 }
 int wmain(int argc,wchar_t** argv) {
@@ -218,6 +251,7 @@ int wmain(int argc,wchar_t** argv) {
                   MH_EnableHook(reinterpret_cast<void*>(append))==MH_OK,"native allocation substitute hook");
         }
         run(layout,range_method,button_method);
+        configured_speed_regression(layout);
         if(module) { MH_Uninitialize(); FreeLibrary(module); }
         std::cout<<"Lane Speed uniform display, native parameter restore, re-lock, stop/scroll, rebuild cleanup and graph guards passed\n";
         return 0;
