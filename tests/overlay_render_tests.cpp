@@ -41,6 +41,22 @@ int frame_count() { return ImGui::GetCurrentContext()?ImGui::GetFrameCount():0; 
 unsigned game_moves{},game_cursor_messages{};
 unsigned game_button_ups{};
 unsigned game_raw_mouse{},game_raw_keyboard{};
+unsigned game_wheels{};
+bool subscreen_probe{},subscreen_contact{};
+unsigned subscreen_clicks{},subscreen_drags{};
+// Spice2x's native mouse-to-touch path starts/updates/ends contacts from
+// WM_LBUTTONDOWN/WM_MOUSEMOVE/WM_LBUTTONUP, independently of its ImGui title bar.
+void subscreen_mouse_message(HWND window,UINT message,WPARAM,LPARAM lparam) {
+    const POINT point{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))};
+    const RECT content{700,450,950,590};
+    if(message==WM_LBUTTONDOWN && PtInRect(&content,point)) {
+        subscreen_contact=true; SetCapture(window);
+    } else if(message==WM_MOUSEMOVE && subscreen_contact) ++subscreen_drags;
+    else if(message==WM_LBUTTONUP && subscreen_contact) {
+        subscreen_contact=false; ++subscreen_clicks;
+        if(GetCapture()==window) ReleaseCapture();
+    }
+}
 using RawInput=UINT(WINAPI*)(HRAWINPUT,UINT,LPVOID,PUINT,UINT);
 RawInput original_raw_input{};
 UINT WINAPI raw_input_probe(HRAWINPUT handle,UINT command,LPVOID data,PUINT size,UINT header_size) {
@@ -52,8 +68,11 @@ UINT WINAPI raw_input_probe(HRAWINPUT handle,UINT command,LPVOID data,PUINT size
     return original_raw_input(handle,command,data,size,header_size);
 }
 BOOL hardware_cursor=TRUE;
-BOOL WINAPI cursor_probe(IDirect3DDevice9*,BOOL value) { const BOOL previous=hardware_cursor; hardware_cursor=value; return previous; }
+unsigned hardware_cursor_changes{};
+BOOL WINAPI cursor_probe(IDirect3DDevice9*,BOOL value) { ++hardware_cursor_changes; const BOOL previous=hardware_cursor; hardware_cursor=value; return previous; }
 LRESULT CALLBACK game_proc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(subscreen_probe) subscreen_mouse_message(window,message,wparam,lparam);
+    if(message==WM_MOUSEWHEEL) ++game_wheels;
     if(message==WM_MOUSEMOVE) ++game_moves;
     if(message==WM_LBUTTONUP) ++game_button_ups;
     if(message==WM_SETCURSOR) {
@@ -86,6 +105,20 @@ EndScene original_end_scene{};
 DWORD rendered_corner{};
 int sampled_frame=-1;
 HWND hotkey_window{};
+POINT test_cursor_position{};
+BOOL WINAPI cursor_position_probe(POINT* point) { *point=test_cursor_position; return TRUE; }
+LPARAM mouse_point(HWND window,int x,int y) {
+    test_cursor_position={x,y}; ClientToScreen(window,&test_cursor_position);
+    return MAKELPARAM(x,y);
+}
+using PresentParameters=HRESULT(WINAPI*)(IDirect3DSwapChain9*,D3DPRESENT_PARAMETERS*);
+PresentParameters original_present_parameters{};
+bool simulate_fullscreen{};
+HRESULT WINAPI present_parameters_probe(IDirect3DSwapChain9* chain,D3DPRESENT_PARAMETERS* parameters) {
+    const auto result=original_present_parameters(chain,parameters);
+    if(SUCCEEDED(result)) parameters->Windowed=simulate_fullscreen?FALSE:TRUE;
+    return result;
+}
 bool hotkey_down{};
 DWORD hotkey_clock{1000},hotkey_message_time{};
 SHORT WINAPI hotkey_state_probe(int key) {
@@ -141,6 +174,154 @@ int main(int argc,char** argv) {
         if (MH_Initialize()!=MH_OK) throw std::runtime_error("MinHook init failed");
         training::Session session; std::string reason;
         if (!training::install_overlay(session,reason)) throw std::runtime_error(reason);
+        if(windowed) {
+            hotkey_window=window;
+            void* unused{};
+            if(MH_CreateHook(reinterpret_cast<void*>(GetCursorPos),reinterpret_cast<void*>(cursor_position_probe),&unused)!=MH_OK ||
+                MH_EnableHook(reinterpret_cast<void*>(GetCursorPos))!=MH_OK ||
+                MH_CreateHook(reinterpret_cast<void*>(GetForegroundWindow),reinterpret_cast<void*>(hotkey_foreground_probe),&unused)!=MH_OK ||
+                MH_EnableHook(reinterpret_cast<void*>(GetForegroundWindow))!=MH_OK)
+                throw std::runtime_error("deterministic mouse boundary probes failed");
+            mouse_point(window,950,590);
+        }
+        if(mode=="windowed-fullscreen") {
+            // Keep the real D3D device windowed to avoid changing the desktop
+            // display mode; replay its fullscreen presentation-mode boundary.
+            auto* parameters_entry=(*reinterpret_cast<void***>(chain.Get()))[9];
+            void* unused{};
+            if(MH_CreateHook(parameters_entry,reinterpret_cast<void*>(present_parameters_probe),reinterpret_cast<void**>(&original_present_parameters))!=MH_OK ||
+                MH_EnableHook(parameters_entry)!=MH_OK ||
+                MH_CreateHook((*reinterpret_cast<void***>(device.Get()))[12],reinterpret_cast<void*>(cursor_probe),&unused)!=MH_OK ||
+                MH_EnableHook((*reinterpret_cast<void***>(device.Get()))[12])!=MH_OK)
+                throw std::runtime_error("fullscreen cursor boundary probes failed");
+            const auto tick=[&] { pass(device.Get()); require(display(),"fullscreen cursor Present failed"); };
+            const auto check=[](bool value,const char* message) { if(!value) throw std::runtime_error(message); };
+            subscreen_probe=true;
+            training::show_overlay(true); tick(); tick();
+            check(!ImGui::GetIO().MouseDrawCursor && hardware_cursor_changes==0,"windowed cursor behavior changed");
+            simulate_fullscreen=true;
+            SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,900,550)); tick(); tick();
+            check(ImGui::GetIO().MouseDrawCursor && hardware_cursor==FALSE,
+                "fullscreen cursor disappears outside the training panel");
+            check(ImGui::GetForegroundDrawList()->VtxBuffer.Size>0,"fullscreen software cursor must actually produce draw vertices");
+            const auto cursor_messages=game_cursor_messages;
+            SendMessageW(window,WM_SETCURSOR,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
+            check(game_cursor_messages==cursor_messages,"fullscreen must not restore a second OS cursor outside the panel");
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,mouse_point(window,900,550));
+            SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,mouse_point(window,910,560)); tick();
+            check(subscreen_contact && ImGui::GetIO().MouseDrawCursor,"fullscreen subscreen drag must keep both touch and cursor active");
+            SendMessageW(window,WM_LBUTTONUP,0,mouse_point(window,910,560)); tick();
+            check(subscreen_clicks==1 && !subscreen_contact,"visible fullscreen cursor must not consume subscreen clicks");
+            auto* panel=ImGui::FindWindowByName("Training Master | Close Beta###Training Master");
+            check(panel!=nullptr,"training panel missing during fullscreen cursor test");
+            SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,static_cast<int>((panel->Pos.x+100)*960/1360),
+                static_cast<int>((panel->Pos.y+10)*600/900))); tick();
+            check(ImGui::GetIO().MouseDrawCursor,"fullscreen cursor must stay visible inside the panel");
+            training::show_overlay(false); tick();
+            check(!ImGui::GetIO().MouseDrawCursor && hardware_cursor==TRUE,"closing fullscreen overlay must restore the native cursor state");
+            training::show_overlay(true); tick();
+            simulate_fullscreen=false; tick();
+            check(!ImGui::GetIO().MouseDrawCursor && hardware_cursor==TRUE,"returning to windowed mode must restore the system cursor");
+            MH_DisableHook(MH_ALL_HOOKS); MH_Uninitialize();
+            training::shutdown_imgui(); DestroyWindow(window);
+            std::cout<<"Fullscreen cursor: inside/outside panel, subscreen drag/click, hide and windowed transition passed\n";
+            return 0;
+        }
+        if(mode=="windowed-coexist") {
+            const auto tick=[&] { pass(device.Get()); require(display(),"coexistence Present failed"); };
+            const auto check=[](bool value,const char* message) { if(!value) throw std::runtime_error(message); };
+            subscreen_probe=true;
+            tick();
+            const auto click=[&] {
+                SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,900,550));
+                SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,mouse_point(window,900,550));
+                SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,mouse_point(window,910,560));
+                SendMessageW(window,WM_LBUTTONUP,0,mouse_point(window,910,560));
+            };
+            click();
+            if(subscreen_clicks!=1) throw std::runtime_error("subscreen mouse-to-touch fixture must work with training overlay hidden");
+            training::show_overlay(true); tick(); tick();
+            click();
+            std::cout<<"Subscreen content clicks with training hidden/open: 1/"<<subscreen_clicks-1<<'\n';
+            if(subscreen_clicks!=2 || subscreen_drags!=2 || subscreen_contact)
+                throw std::runtime_error("opening training overlay blocks spice2x subscreen content mouse-to-touch messages");
+            tick(); tick(); tick();
+            auto* panel=ImGui::FindWindowByName("Training Master | Close Beta###Training Master");
+            check(panel!=nullptr,"training panel missing for coexistence input test");
+            const auto panel_point=[&] {
+                return mouse_point(window,static_cast<int>((panel->Pos.x+100)*960/1360),
+                    static_cast<int>((panel->Pos.y+10)*600/900));
+            };
+            // External touch owns its entire drag, even when it crosses our panel.
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,mouse_point(window,900,550));
+            SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,panel_point()); tick();
+            check(subscreen_contact && GetCapture()==window,"training overlay stole a subscreen drag");
+            SendMessageW(window,WM_LBUTTONUP,0,panel_point()); tick(); tick();
+            check(subscreen_clicks==3 && subscreen_drags==3 && !subscreen_contact && GetCapture()!=window,
+                "subscreen drag must receive its release over the training panel");
+
+            // Conversely, a training title-bar drag must never become a subscreen tap.
+            // Do not render between the outside move and the inside press: ownership
+            // must use the new event coordinates, rather than WantCaptureMouse's old frame.
+            SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,950,590)); tick();
+            const auto original_position=panel->Pos;
+            const auto original_ups=game_button_ups;
+            SendMessageW(window,WM_MOUSEMOVE,0,panel_point());
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,panel_point()); tick(); tick();
+            SendMessageW(window,WM_MOUSEMOVE,MK_LBUTTON,mouse_point(window,900,550)); tick();
+            SendMessageW(window,WM_LBUTTONUP,0,mouse_point(window,900,550)); tick(); tick();
+            check(panel->Pos.x>original_position.x+100 && panel->Pos.y>original_position.y+100,
+                "training panel must remain draggable across the subscreen");
+            check(subscreen_clicks==3 && !subscreen_contact && game_button_ups==original_ups && GetCapture()!=window,
+                "training drag leaked a click/release into the subscreen");
+
+            // Isolate raw input and cursor APIs while exercising the actual WndProc chain.
+            void* unused{};
+            check(MH_CreateHook(reinterpret_cast<void*>(GetRawInputData),reinterpret_cast<void*>(raw_input_probe),reinterpret_cast<void**>(&original_raw_input))==MH_OK &&
+                MH_EnableHook(reinterpret_cast<void*>(GetRawInputData))==MH_OK,"coexistence raw-input probe failed");
+            auto* cursor_entry=(*reinterpret_cast<void***>(device.Get()))[12];
+            check(MH_CreateHook(cursor_entry,reinterpret_cast<void*>(cursor_probe),&unused)==MH_OK &&
+                MH_EnableHook(cursor_entry)==MH_OK,"coexistence cursor probe failed");
+            ImGui::SetWindowPos(panel,{20,20}); tick(); tick();
+            const auto outside=mouse_point(window,900,550);
+            SendMessageW(window,WM_MOUSEMOVE,0,outside); tick();
+            const auto cursor_messages=game_cursor_messages;
+            SendMessageW(window,WM_SETCURSOR,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
+            SendMessageW(window,WM_INPUT,RIM_INPUT,0x11110000);
+            SendMessageW(window,WM_INPUT,RIM_INPUT,0x22220000);
+            SendMessageW(window,WM_MOUSEWHEEL,MAKEWPARAM(0,WHEEL_DELTA),MAKELPARAM(test_cursor_position.x,test_cursor_position.y));
+            check(game_cursor_messages==cursor_messages+1 && game_raw_mouse==1 && game_raw_keyboard==1 && game_wheels==1 &&
+                !ImGui::GetIO().MouseDrawCursor && hardware_cursor==TRUE,
+                "spice2x must retain cursor, raw mouse, keyboard and wheel outside training windows");
+            const auto inside=panel_point();
+            SendMessageW(window,WM_MOUSEMOVE,0,inside); tick();
+            SendMessageW(window,WM_SETCURSOR,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
+            SendMessageW(window,WM_INPUT,RIM_INPUT,0x11110000);
+            SendMessageW(window,WM_INPUT,RIM_INPUT,0x22220000);
+            SendMessageW(window,WM_MOUSEWHEEL,MAKEWPARAM(0,WHEEL_DELTA),MAKELPARAM(test_cursor_position.x,test_cursor_position.y));
+            check(game_cursor_messages==cursor_messages+1 && game_raw_mouse==1 && game_raw_keyboard==2 && game_wheels==1 &&
+                !ImGui::GetIO().MouseDrawCursor && hardware_cursor==TRUE && hardware_cursor_changes==0 &&
+                GetCursor()==LoadCursorW(nullptr,IDC_ARROW),
+                "windowed training must use the native system cursor without drawing or hiding a cursor");
+            ImGui::SetMouseCursor(ImGuiMouseCursor_TextInput); tick();
+            SendMessageW(window,WM_SETCURSOR,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
+            check(GetCursor()==LoadCursorW(nullptr,IDC_IBEAM),"windowed text input must use the native system I-beam");
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW); tick();
+            SendMessageW(window,WM_SETCURSOR,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
+            check(GetCursor()==LoadCursorW(nullptr,IDC_SIZEWE),"windowed resize must use the native system resize cursor");
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,inside); tick();
+            training::show_overlay(false); tick();
+            SendMessageW(window,WM_LBUTTONUP,0,mouse_point(window,900,550));
+            check(game_button_ups==original_ups && GetCapture()!=window && hardware_cursor==TRUE && !ImGui::GetIO().MouseDrawCursor,
+                "closing training during its own drag must restore cursor and retain the matching release");
+            check(hardware_cursor_changes==0,"windowed overlay must never change the game's D3D cursor visibility");
+            click();
+            check(subscreen_clicks==4,"subscreen input must still work after closing training during a drag");
+            std::cout<<"Overlay coexistence: both drag directions, between-frame hit testing, raw input, wheels, cursors and close-during-drag passed\n";
+            MH_DisableHook(MH_ALL_HOOKS); MH_Uninitialize();
+            training::shutdown_imgui(); DestroyWindow(window);
+            return 0;
+        }
         if(mode=="hotkey") {
             hotkey_window=window;
             const auto probe=[](void* entry,void* replacement) {
@@ -330,9 +511,9 @@ int main(int argc,char** argv) {
             ImGuiContextHook hook{}; hook.Type=ImGuiContextHookType_NewFramePost; hook.Callback=corner_marker;
             ImGui::AddContextHook(ImGui::GetCurrentContext(),&hook);
             const auto tick=[&] { pass(device.Get()); require(display(),"windowed Present failed"); };
-            SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(950,590)); tick(); tick();
-            // Outside the overlay panel: game mouse handlers must still stay quiet
-            // while the overlay owns editing, and movement must not build a backlog.
+            SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,950,590)); tick(); tick();
+            // Outside the panel, spice2x/game input stays live. Observing hover
+            // for our own UI must still coalesce motion without a backlog.
             game_moves=game_cursor_messages=0;
             const auto before_input=frame_count();
             const auto input_start=std::chrono::steady_clock::now();
@@ -340,39 +521,44 @@ int main(int argc,char** argv) {
             for(unsigned n=0;n<128;++n) SendMessageW(window,WM_SETCURSOR,reinterpret_cast<WPARAM>(window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
             for(unsigned n=0;n<1024;++n) SendMessageW(window,WM_INPUT,RIM_INPUT,0x11110000);
             SendMessageW(window,WM_INPUT,RIM_INPUT,0x22220000);
-            SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(950,590));
+            SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,950,590));
             const auto queued=ImGui::GetCurrentContext()->InputEventsQueue.Size;
             const auto input_ms=std::chrono::duration<double,std::milli>(std::chrono::steady_clock::now()-input_start).count();
             const bool no_input_draw=frame_count()==before_input;
             device->ShowCursor(TRUE); tick();
-            const bool hardware_hidden=device->ShowCursor(FALSE)==FALSE;
+            const bool hardware_visible=device->ShowCursor(TRUE)==TRUE;
             const auto& io=ImGui::GetIO();
             const bool canvas=io.DisplaySize.x==1360 && io.DisplaySize.y==900;
             const bool mapped=std::abs(io.MousePos.x-950.f*1360/960)<1 && std::abs(io.MousePos.y-590.f*900/600)<1;
             const bool corner=rendered_corner==0xff00ff;
             std::cout<<"Windowed 960x600 -> 1360x900: full canvas="<<canvas<<", mouse mapped="<<mapped<<", corner covered="<<corner<<'\n';
             std::cout<<"8193 moves / 128 cursor messages: forwarded="<<game_moves<<'/'<<game_cursor_messages
-                     <<", queued="<<queued<<", hardware cursor hidden="<<hardware_hidden<<", no input draws="<<no_input_draw<<", ms="<<input_ms<<'\n';
-            ok &= canvas && mapped && corner && game_moves==0 && game_cursor_messages==0 && queued<=2 && hardware_hidden && io.MouseDrawCursor && no_input_draw;
+                     <<", queued="<<queued<<", hardware cursor visible="<<hardware_visible<<", no input draws="<<no_input_draw<<", ms="<<input_ms<<'\n';
+            ok &= canvas && mapped && corner && game_moves==8193 && game_cursor_messages==128 && queued<=2 && hardware_visible && !io.MouseDrawCursor && no_input_draw;
             std::cout<<"Raw input forwarded: mouse="<<game_raw_mouse<<", keyboard="<<game_raw_keyboard<<'\n';
-            ok &= game_raw_mouse==0 && game_raw_keyboard==1;
+            ok &= game_raw_mouse==1024 && game_raw_keyboard==1;
             RECT resized{0,0,1280,720}; AdjustWindowRect(&resized,WS_OVERLAPPEDWINDOW,FALSE);
             SetWindowPos(window,nullptr,0,0,resized.right-resized.left,resized.bottom-resized.top,SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);
-            tick(); SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(1270,710)); tick();
+            tick(); SendMessageW(window,WM_MOUSEMOVE,0,mouse_point(window,1270,710)); tick();
             const bool resize_mapping=std::abs(io.MousePos.x-1270.f*1360/1280)<1 && std::abs(io.MousePos.y-710.f*900/720)<1;
             auto* panel=ImGui::FindWindowByName("Training Master | Close Beta###Training Master");
-            const auto move=[&](float x,float y) { SendMessageW(window,WM_MOUSEMOVE,0,MAKELPARAM(static_cast<int>(x*1280/1360),static_cast<int>(y*720/900))); tick(); };
+            LPARAM mouse_coords{};
+            const auto move=[&](float x,float y) {
+                mouse_coords=mouse_point(window,static_cast<int>(x*1280/1360),static_cast<int>(y*720/900));
+                SendMessageW(window,WM_MOUSEMOVE,0,mouse_coords); tick();
+            };
             move(panel->Pos.x+100,panel->Pos.y+10); tick();
-            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,0); tick(); tick();
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,mouse_coords); tick(); tick();
             move(1340,880); tick();
-            SendMessageW(window,WM_LBUTTONUP,0,0); tick(); tick();
+            SendMessageW(window,WM_LBUTTONUP,0,mouse_coords); tick(); tick();
             const bool drag=panel->Pos.x>1000 && panel->Pos.y>800;
             std::cout<<"Client resize remaps input="<<resize_mapping<<", drag reaches right/bottom="<<drag<<'\n';
             ok &= resize_mapping && drag;
-            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,0); tick();
+            SendMessageW(window,WM_LBUTTONDOWN,MK_LBUTTON,mouse_coords); tick();
             training::show_overlay(false); tick();
-            SendMessageW(window,WM_LBUTTONUP,0,0);
-            const bool release=game_button_ups==0 && GetCapture()!=window;
+            const auto before_release=game_button_ups;
+            SendMessageW(window,WM_LBUTTONUP,0,mouse_coords);
+            const bool release=game_button_ups==before_release && GetCapture()!=window;
             const bool restored_cursor=device->ShowCursor(TRUE)==TRUE;
             std::cout<<"Hidden overlay restores game hardware cursor="<<restored_cursor<<", releases owned drag="<<release<<'\n'; ok &= restored_cursor && release;
             const auto hidden_moves=game_moves;

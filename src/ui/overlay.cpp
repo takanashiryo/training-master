@@ -6,6 +6,7 @@
 #include "training_about.hpp"
 #include "ui/preferences.hpp"
 #include <imgui.h>
+#include <imgui_internal.h>
 #include <imgui_impl_dx9.h>
 #include <imgui_impl_win32.h>
 #include <MinHook.h>
@@ -185,6 +186,7 @@ std::mutex motion_mutex;
 struct MouseMotion { HWND window{}; WPARAM buttons{}; LPARAM position{}; bool pending{}; };
 MouseMotion motion;
 std::atomic<unsigned> overlay_mouse_buttons{};
+unsigned forwarded_mouse_buttons{}; // Guarded by imgui_mutex, like the ImGui input queue.
 HWND game_window{};
 WNDPROC old_proc{};
 IDirect3DDevice9* game_device{};
@@ -194,6 +196,7 @@ std::shared_ptr<const SongInfo> cover_info;
 JacketPixels cover_pixels;
 bool cover_attempted{};
 float client_width{},client_height{},canvas_width{},canvas_height{};
+bool windowed_presentation{true};
 bool cursor_borrowed{},os_cursor_hidden{};
 BOOL native_cursor_visible{};
 HCURSOR native_os_cursor{};
@@ -220,6 +223,10 @@ bool update_geometry() {
     if(FAILED(cover_device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back)) || FAILED(back->GetDesc(&desc))) return false;
     client_width=static_cast<float>(client.right); client_height=static_cast<float>(client.bottom);
     canvas_width=static_cast<float>(desc.Width); canvas_height=static_cast<float>(desc.Height);
+    Microsoft::WRL::ComPtr<IDirect3DSwapChain9> chain;
+    D3DPRESENT_PARAMETERS parameters{};
+    if(SUCCEEDED(cover_device->GetSwapChain(0,&chain)) && SUCCEEDED(chain->GetPresentParameters(&parameters)))
+        windowed_presentation=parameters.Windowed!=FALSE;
     return canvas_width>0 && canvas_height>0;
 }
 void map_mouse_position(float x,float y) {
@@ -246,13 +253,34 @@ unsigned mouse_button_bit(UINT message,WPARAM wparam) {
 bool mouse_button_up(UINT message) {
     return message==WM_LBUTTONUP || message==WM_RBUTTONUP || message==WM_MBUTTONUP || message==WM_XBUTTONUP;
 }
+ImVec2 mouse_position(HWND window,UINT message,LPARAM lparam) {
+    POINT point{};
+    if(message>=WM_MOUSEFIRST && message<=WM_MOUSELAST) {
+        point={static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))};
+        if(message==WM_MOUSEWHEEL || message==WM_MOUSEHWHEEL) ScreenToClient(window,&point);
+    } else if(!GetCursorPos(&point) || !ScreenToClient(window,&point)) return ImGui::GetIO().MousePos;
+    if(client_width<=0 || client_height<=0) return {-FLT_MAX,-FLT_MAX};
+    return {point.x*canvas_width/client_width,point.y*canvas_height/client_height};
+}
+bool captures_mouse_at(const ImVec2& position) {
+    if(overlay_mouse_buttons.load()) return true;
+    if(!visible.load() || forwarded_mouse_buttons) return false;
+    // WantCaptureMouse describes the previous frame's pointer. Hit-test the
+    // event position so a move and click between Presents gets the right owner.
+    ImGuiWindow* hovered{};
+    ImGui::FindHoveredWindowEx(position,false,&hovered,nullptr);
+    return hovered || ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopup);
+}
 void update_cursor(bool open) {
     if(!cover_device || !ImGui::GetCurrentContext()) return;
-    if(!open && !cursor_borrowed) return;
-    auto& io=ImGui::GetIO(); io.MouseDrawCursor=open;
-    DWORD foreground_pid{}; GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
+    auto& io=ImGui::GetIO();
+    io.MouseDrawCursor=open && !windowed_presentation;
+    if(open && windowed_presentation) io.ConfigFlags&=~ImGuiConfigFlags_NoMouseCursorChange;
+    else io.ConfigFlags|=ImGuiConfigFlags_NoMouseCursorChange;
+    DWORD foreground_pid{};
+    if(open || cursor_borrowed) GetWindowThreadProcessId(GetForegroundWindow(),&foreground_pid);
     const bool foreground=foreground_pid==GetCurrentProcessId();
-    if(open) {
+    if(open && !windowed_presentation) {
         const BOOL previously_visible=cover_device->ShowCursor(FALSE);
         if(!cursor_borrowed) {
             native_cursor_visible=previously_visible; native_os_cursor=GetCursor(); cursor_borrowed=true;
@@ -269,6 +297,13 @@ void update_cursor(bool open) {
         cover_device->ShowCursor(native_cursor_visible);
         if(os_cursor_hidden && foreground && GetCursor()==nullptr) SetCursor(native_os_cursor);
         cursor_borrowed=os_cursor_hidden=false;
+    }
+    if(open && windowed_presentation && foreground) {
+        // The Win32 backend selects Windows' native themed arrow/text/resize
+        // cursors. Windowed mode never draws a sprite or hides the OS/D3D cursor.
+        ImGui_ImplWin32_WndProcHandler(game_window,WM_SETCURSOR,reinterpret_cast<WPARAM>(game_window),MAKELPARAM(HTCLIENT,WM_MOUSEMOVE));
+    }
+    if(!visible.load()) {
         { std::lock_guard lock(motion_mutex); motion.pending=false; }
         io.ClearEventsQueue(); io.ClearInputKeys(); io.ClearInputMouse();
     }
@@ -399,7 +434,7 @@ void present_overlay(IDirect3DDevice9* device,HWND destination) {
         { std::lock_guard lock(imgui_mutex); poll_overlay_hotkey(); }
         if (!visible.load() && !(preferences().snapshot().always_show_judgment_counter && bound_session->snapshot().playing)) {
             std::lock_guard lock(imgui_mutex);
-            if(cursor_borrowed) { WindowDpiScope dpi(game_window); update_cursor(false); }
+            WindowDpiScope dpi(game_window); update_cursor(false);
             return;
         }
         if (FAILED(device->BeginScene())) return;
@@ -971,7 +1006,9 @@ void frame_imgui(Session& session) {
     poll_overlay_hotkey();
     WindowDpiScope dpi(game_window);
     if(!update_geometry()) return;
-    update_cursor(visible.load());
+    // Fullscreen needs a cursor across the entire game canvas, including the
+    // subscreen. Its visibility must not decide which UI receives mouse input.
+    update_cursor(visible.load() && (!windowed_presentation || captures_mouse_at(mouse_position(game_window,WM_SETCURSOR,0))));
     flush_mouse_motion();
     ImGui_ImplDX9_NewFrame(); ImGui_ImplWin32_NewFrame();
     auto& io=ImGui::GetIO();
@@ -1015,33 +1052,63 @@ LRESULT input_imgui(HWND window,UINT message,WPARAM wparam,LPARAM lparam,bool& c
         }
     }
     if(!open && toggle_key) { consumed=true; return 0; }
-    if(open && message==WM_SETCURSOR && LOWORD(lparam)==HTCLIENT) {
-        consumed=true; return TRUE; // Keep native SetCursor handlers from resurrecting a second cursor.
+    const unsigned button=mouse_button_bit(message,wparam);
+    const bool cancelled=message==WM_KILLFOCUS || message==WM_CANCELMODE || message==WM_CAPTURECHANGED;
+    if(!open && !overlay_mouse_buttons.load() && !button && !cancelled) return 0;
+    std::lock_guard lock(imgui_mutex);
+    WindowDpiScope dpi(game_window);
+    if(cancelled) {
+        overlay_mouse_buttons=0; forwarded_mouse_buttons=0;
+    }
+    const bool mouse=message>=WM_MOUSEFIRST && message<=WM_MOUSELAST;
+    const bool owns_mouse=(mouse || message==WM_INPUT || message==WM_SETCURSOR) &&
+        captures_mouse_at(mouse_position(window,message,lparam));
+    if(message==WM_SETCURSOR && LOWORD(lparam)==HTCLIENT && (owns_mouse || (open && !windowed_presentation))) {
+        if(windowed_presentation) {
+            ImGui::GetIO().MouseDrawCursor=false;
+            ImGui::GetIO().ConfigFlags&=~ImGuiConfigFlags_NoMouseCursorChange;
+            ImGui_ImplWin32_WndProcHandler(window,message,wparam,lparam);
+        }
+        consumed=true; return TRUE;
     }
     if(open && message==WM_INPUT) {
         RAWINPUTHEADER header{}; UINT size=sizeof(header);
         if(GetRawInputData(reinterpret_cast<HRAWINPUT>(lparam),RID_HEADER,&header,&size,sizeof(header))==sizeof(header) &&
-            header.dwType==RIM_TYPEMOUSE) {
+            header.dwType==RIM_TYPEMOUSE && owns_mouse) {
             // Preserve Windows' foreground raw-input cleanup without invoking the
             // game's mouse path. Keyboard/HID raw input still reaches the game.
             consumed=true; return DefWindowProcW(window,message,wparam,lparam);
         }
     }
     if(open && message==WM_MOUSEMOVE) {
-        std::lock_guard lock(motion_mutex);
+        std::lock_guard motion_lock(motion_mutex);
         motion={window,wparam,lparam,true};
-        consumed=true; return 0;
+        consumed=owns_mouse; return 0;
     }
     // A button pressed while editing belongs to the overlay until its release,
     // even if the overlay hotkey closes it while the user is still dragging.
-    const unsigned button=mouse_button_bit(message,wparam);
     const bool releasing=mouse_button_up(message) && (overlay_mouse_buttons.load()&button)!=0;
+    const bool owns_button=mouse_button_up(message)?releasing:owns_mouse;
+    if(button) {
+        if(mouse_button_up(message)) forwarded_mouse_buttons&=~button;
+        else if(!owns_button) forwarded_mouse_buttons|=button;
+    }
     if (open || releasing) {
-        std::lock_guard lock(imgui_mutex);
-        WindowDpiScope dpi(game_window);
         flush_mouse_motion();
-        const auto result=ImGui_ImplWin32_WndProcHandler(window,message,wparam,lparam);
-        if(button) {
+        LRESULT result{};
+        if(mouse) {
+            const auto position=mouse_position(window,message,lparam);
+            ImGui::GetIO().AddMousePosEvent(position.x,position.y);
+        }
+        if(button && !owns_button) {
+            // Observe outside clicks to drop keyboard focus, without letting
+            // the Win32 backend SetCapture/ReleaseCapture on spice2x's behalf.
+            unsigned index{};
+            while((1u<<index)!=button) ++index;
+            ImGui::GetIO().AddMouseButtonEvent(index,!mouse_button_up(message));
+        } else if(!mouse || owns_mouse || releasing)
+            result=ImGui_ImplWin32_WndProcHandler(window,message,wparam,lparam);
+        if(button && owns_button) {
             if(mouse_button_up(message)) overlay_mouse_buttons.fetch_and(~button);
             else overlay_mouse_buttons.fetch_or(button);
         }
@@ -1049,9 +1116,8 @@ LRESULT input_imgui(HWND window,UINT message,WPARAM wparam,LPARAM lparam,bool& c
             POINT point{static_cast<short>(LOWORD(lparam)),static_cast<short>(HIWORD(lparam))};
             if(ScreenToClient(window,&point)) map_mouse_position(static_cast<float>(point.x),static_cast<float>(point.y));
         }
-        const bool mouse=(message>=WM_MOUSEFIRST && message<=WM_MOUSELAST);
         const bool keyboard=(message>=WM_KEYFIRST && message<=WM_KEYLAST) || message==WM_CHAR;
-        consumed=mouse || (keyboard && ImGui::GetIO().WantCaptureKeyboard);
+        consumed=(mouse && (button?owns_button:owns_mouse)) || (keyboard && ImGui::GetIO().WantCaptureKeyboard);
         if (toggle_key || (key_message && capturing_hotkey)) consumed=true;
         return result;
     }
