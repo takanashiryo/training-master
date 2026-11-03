@@ -801,7 +801,7 @@ void draw_settings(Session& session,const State& s) {
     if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::BeginTooltip();
         ImGui::TextColored({1.f,.2f,.2f,1.f},"%s",i18n::text("Experimental feature. Some effects cannot be removed."));
-        ImGui::TextUnformatted(i18n::text("Hide extra animations, screen effects and Live2D; keep the base background, lanes and HUD."));
+        ImGui::TextUnformatted(i18n::text("Hide the song's special visual effects."));
         if(!s.track.song_visuals_ready)
             ImGui::TextUnformatted(i18n::text("Song visual control is unavailable for this track"));
         ImGui::EndTooltip();
