@@ -255,7 +255,7 @@ endif()
 if(MINGW)
   foreach(t training_preview training_loader training_verify training_camera_tests training_chart_tests
             training_gauge_tests training_lane_speed_tests training_reverse_audio_tests training_song_info_tests
-            training_scene_tests training_stage_tests training_track_end_tests)
+            training_scene_tests training_stage_tests training_track_end_tests training_song_visuals_tests)
     target_link_options(${t} PRIVATE -municode)
   endforeach()
 endif()

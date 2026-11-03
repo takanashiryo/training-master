@@ -5,9 +5,14 @@
 
 namespace training::song_visuals {
 namespace {
+// Clang SEH cannot catch a faulting load in the handler's own frame. Keep
+// native reads in a separate frame, including optimized LLVM MinGW builds.
+template<class T> __declspec(noinline) T load(Ptr p) {
+    return *reinterpret_cast<const T*>(p);
+}
 template<class T> T read(Ptr p,unsigned offset=0) {
     T value{};
-    __try { value=*reinterpret_cast<const T*>(p+offset); }
+    __try { value=load<T>(p+offset); }
     __except(EXCEPTION_EXECUTE_HANDLER) { throw std::runtime_error("Song visual context is unreadable"); }
     return value;
 }

@@ -40,16 +40,22 @@ void record(unsigned kind,float offset,bool input,float position) {
     }
     history.push_back({position,state});
 }
+namespace {
+// Preserve a separate faulting frame: Clang SEH cannot protect loads in the
+// same frame as __try, even though MSVC accepts the original inline form.
+__declspec(noinline) void observe_native_unchecked(std::uintptr_t result,float position) {
+    if(!result) return;
+    const auto kind=*reinterpret_cast<const unsigned*>(result);
+    const auto delta=*reinterpret_cast<const float*>(result+8);
+    const bool input=*reinterpret_cast<const unsigned char*>(result+24)==1 &&
+        *reinterpret_cast<const unsigned char*>(result+32)==1 &&
+        *reinterpret_cast<const unsigned*>(result+28)==1;
+    record(kind,delta,input,position);
+}
+}
 void observe_native(std::uintptr_t result,float position) {
-    __try {
-        if(!result) return;
-        const auto kind=*reinterpret_cast<const unsigned*>(result);
-        const auto delta=*reinterpret_cast<const float*>(result+8);
-        const bool input=*reinterpret_cast<const unsigned char*>(result+24)==1 &&
-            *reinterpret_cast<const unsigned char*>(result+32)==1 &&
-            *reinterpret_cast<const unsigned*>(result+28)==1;
-        record(kind,delta,input,position);
-    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+    __try { observe_native_unchecked(result,position); }
+    __except(EXCEPTION_EXECUTE_HANDLER) {}
 }
 Snapshot snapshot() { std::lock_guard lock(mutex); return state; }
 }

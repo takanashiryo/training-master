@@ -299,7 +299,7 @@ Result resolve_impl(HMODULE module) {
             // Component visibility +44 and LAppModel visibility +573, through
             // 64-byte entries. Verify every instruction; no external calls.
             if(matches_guard(setter,"88512c4c8b4918488b4110493bc1741c488b50084883c0404c8b42080fb6512c4188903d020000493bc175e4c3"))
-                visuals.set_live2d_visible=reinterpret_cast<song_visuals::SetVisible>(image.base+setter);
+                visuals.set_live2d_visible=reinterpret_cast<song_visuals::SetVisible>(reinterpret_cast<std::uintptr_t>(image.base+setter));
         }
     }
     if(visuals.layer) {
@@ -309,8 +309,8 @@ Result resolve_impl(HMODULE module) {
             const auto getter=image.rva_of(image.read<std::uintptr_t>(table+376));
             if(matches_guard(setter,"8b4908440fb6c2ba0100000048ff25????????") &&
                matches_guard(getter,"4c8bdc4883ec688b4908498d53b833c0")) {
-                visuals.set_visible=reinterpret_cast<song_visuals::SetVisible>(image.base+setter);
-                visuals.visible=reinterpret_cast<song_visuals::Visible>(image.base+getter);
+                visuals.set_visible=reinterpret_cast<song_visuals::SetVisible>(reinterpret_cast<std::uintptr_t>(image.base+setter));
+                visuals.visible=reinterpret_cast<song_visuals::Visible>(reinterpret_cast<std::uintptr_t>(image.base+getter));
             }
         }
     }
@@ -353,7 +353,7 @@ Result resolve_impl(HMODULE module) {
     for(const auto f:image.functions) {
         if(f.end-f.begin!=raw_presenter.size()/2 || !clean_entry(image,f) || !matches_guard(f.begin,raw_presenter)) continue;
         ++presenters;
-        visuals.present=reinterpret_cast<song_visuals::PostRender>(image.base+f.begin);
+        visuals.present=reinterpret_cast<song_visuals::PostRender>(reinterpret_cast<std::uintptr_t>(image.base+f.begin));
     }
     if(presenters!=1) visuals.present=nullptr;
     unsigned judgment_matches=0;
