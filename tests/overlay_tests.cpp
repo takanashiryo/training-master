@@ -179,6 +179,8 @@ int main() {
         check(!session.snapshot().autoplay && !session.snapshot().enabled && !session.suppress_result(),
               "displaying AutoPlay controls must not enable training, AutoPlay or taint the track");
         check(playing.find("All")!=std::string::npos,"AutoPlay dropdown shows the default All mode");
+        check(playing.find("Hide song visuals")!=std::string::npos && !session.snapshot().hide_song_visuals,
+              "song presentation switch is visible and defaults off");
         TransportBackend backend;
         activate_transport(session,"##transport-loop"); session.tick(0,false,backend);
         check(!session.snapshot().loop && !session.snapshot().repeat && !session.snapshot().enabled,

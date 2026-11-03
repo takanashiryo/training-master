@@ -53,6 +53,7 @@ void Session::end(Backend& backend) {
     if (rewind_muted_) backend.mute(false);
     rewind_muted_=false; state_.rewinding=state_.gauge_returning=state_.at_end=false;
     state_.playing = state_.enabled = state_.paused = state_.autoplay = false;
+    state_.hide_song_visuals=false;
     state_.rate = 1.f;
     state_.reversing = state_.camera_locked = false;
     // Keep taint until the next begin: result collection may follow world teardown.
@@ -82,6 +83,11 @@ void Session::lane_speed_unavailable() {
     state_.ready=false; state_.paused=true; state_.rewinding=state_.reversing=false;
     state_.autoplay=state_.camera_locked=false;
     state_.message="Lane Speed control failed; paused. Results remain blocked.";
+}
+void Session::song_visuals_unavailable() {
+    std::lock_guard lock(mutex_);
+    state_.hide_song_visuals=state_.track.song_visuals_ready=false;
+    state_.message="Song visual control is unavailable for this track";
 }
 bool Session::enable(Backend& b) {
     auto& s=state_;
@@ -201,6 +207,10 @@ bool Session::apply(const Command& c, Backend& b) {
         s.message="Practice track: results and upload disabled";
         return true;
     }
+    if(c.action==Action::SetHideSongVisuals) {
+        s.hide_song_visuals=c.value!=0 && s.enabled && s.ready && s.track.song_visuals_ready;
+        return true;
+    }
     if (c.action==Action::SetAutoplayMode) {
         if(std::isfinite(c.value) && c.value>=0 && c.value<=2 && std::floor(c.value)==c.value)
             s.autoplay_mode=static_cast<AutoplayMode>(static_cast<int>(c.value));
@@ -230,7 +240,7 @@ bool Session::apply(const Command& c, Backend& b) {
         s.lane_speed_locked=false;
         if ((s.rewinding && !b.seek(s.position)) || (s.reversing && !b.reverse(false)) ||
             !b.rate(1.f) || ((s.paused || s.reversing) && !b.pause(false)) || !release_rewind_mute(b)) return false;
-        s.enabled = s.paused = s.loop = s.repeat = s.autoplay = false; s.rate = 1.f;
+        s.enabled = s.paused = s.loop = s.repeat = s.autoplay = s.hide_song_visuals = false; s.rate = 1.f;
         s.reversing=s.camera_locked=s.rewinding=s.gauge_returning=s.at_end=false;
         s.message = "Training off; this track still cannot save results";
         break;
@@ -299,7 +309,7 @@ bool Session::apply(const Command& c, Backend& b) {
         b.release_lane_speed(); s.lane_speed_locked=false;
         if ((s.reversing && !b.reverse(false)) || !b.rate(1.f) || !b.pause(false) || !b.finish() || !release_rewind_mute(b)) return false;
         s.finish_requested=true;
-        s.enabled = s.paused = s.loop = s.repeat = s.autoplay = false; s.rate = 1.f;
+        s.enabled = s.paused = s.loop = s.repeat = s.autoplay = s.hide_song_visuals = false; s.rate = 1.f;
         s.reversing=s.camera_locked=s.rewinding=s.gauge_returning=s.at_end=false;
         s.message = "Practice finished; result collection remains blocked";
         break;

@@ -23,6 +23,7 @@ struct Track {
     bool camera_ready{};
     bool lane_speed_ready{};
     bool gauge_ready{};
+    bool song_visuals_ready{};
 };
 struct State {
     std::uint64_t generation{};
@@ -41,11 +42,12 @@ struct State {
     bool at_end{};
     bool finish_requested{};
     AutoplayMode autoplay_mode{AutoplayMode::All};
+    bool hide_song_visuals{};
 };
 struct LoopRange { float start{},end{}; };
 LoopRange loop_range(const State& state);
 float loop_gain(const State& state);
-enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode };
+enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode, SetHideSongVisuals };
 struct Command { std::uint64_t generation; Action action; float value{}, end{}; };
 class Backend {
 public:
@@ -82,6 +84,7 @@ public:
     void camera_unavailable();
     bool camera_requested() const;
     void lane_speed_unavailable();
+    void song_visuals_unavailable();
     void set_loop_buffers(float before,float after);
     // Called at native play-state entry, before it can schedule a failure scene.
     // True holds that state while the ordinary timer hook animates the return.

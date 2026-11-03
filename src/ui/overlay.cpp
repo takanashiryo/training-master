@@ -794,6 +794,19 @@ void draw_settings(Session& session,const State& s) {
     ImGui::BeginDisabled(!s.ready || !s.track.camera_ready);
     if (ImGui::Checkbox(i18n::label("Block camera movement"),&camera_locked)) send(Action::SetCameraLocked,camera_locked?1.f:0.f);
     ImGui::EndDisabled();
+    ImGui::BeginDisabled(!s.ready || !s.track.song_visuals_ready);
+    bool hide_song_visuals=s.hide_song_visuals;
+    if(ImGui::Checkbox(i18n::label("Hide song visuals (Experimental)"),&hide_song_visuals))
+        send(Action::SetHideSongVisuals,hide_song_visuals?1.f:0.f);
+    if(ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+        ImGui::BeginTooltip();
+        ImGui::TextColored({1.f,.2f,.2f,1.f},"%s",i18n::text("Experimental feature. Some effects cannot be removed."));
+        ImGui::TextUnformatted(i18n::text("Hide extra animations, screen effects and Live2D; keep the base background, lanes and HUD."));
+        if(!s.track.song_visuals_ready)
+            ImGui::TextUnformatted(i18n::text("Song visual control is unavailable for this track"));
+        ImGui::EndTooltip();
+    }
+    ImGui::EndDisabled();
     ImGui::BeginDisabled(!s.ready || !s.track.gauge_ready);
     bool gauge_enabled=s.gauge.enabled;
     if(ImGui::Checkbox(i18n::label("Gauge###gauge-enabled"),&gauge_enabled)) send(Action::SetGaugeEnabled,gauge_enabled?1.f:0.f);

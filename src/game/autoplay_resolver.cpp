@@ -278,6 +278,84 @@ Result resolve_impl(HMODULE module) {
         }
         return true;
     };
+    // Song presentation uses separate BM2D roots and an engine render callback.
+    // Optional discovery: failure disables this control without disabling training.
+    auto& visuals=layout.song_visuals;
+    auto table_address=[&](const char* type) -> std::uintptr_t {
+        const auto table=image.vtable(type);
+        return table?reinterpret_cast<std::uintptr_t>(image.base+table):0;
+    };
+    visuals.ex_bg=table_address(".?AVGameExBgView@Game@@");
+    visuals.autopara=table_address(".?AVGameAutoparaBgView@Game@@");
+    visuals.post=table_address(".?AVGamePostEffectView@Game@@");
+    visuals.layer=table_address(".?AVCLayer@BM2D@@");
+    visuals.priority=table_address(".?AVPriorityRangePostEffector@Game@@");
+    visuals.target=table_address(".?AVCPriorityRangeRenderTarget@@");
+    visuals.live2d=table_address(".?AVCLive2DCrewComponent@@");
+    if(visuals.live2d) {
+        const auto table=image.rva_of(visuals.live2d);
+        if(image.in_region(table,72,false)) {
+            const auto setter=image.rva_of(image.read<std::uintptr_t>(table+64));
+            // Component visibility +44 and LAppModel visibility +573, through
+            // 64-byte entries. Verify every instruction; no external calls.
+            if(matches_guard(setter,"88512c4c8b4918488b4110493bc1741c488b50084883c0404c8b42080fb6512c4188903d020000493bc175e4c3"))
+                visuals.set_live2d_visible=reinterpret_cast<song_visuals::SetVisible>(image.base+setter);
+        }
+    }
+    if(visuals.layer) {
+        const auto table=image.rva_of(visuals.layer);
+        if(image.in_region(table,384,false)) {
+            const auto setter=image.rva_of(image.read<std::uintptr_t>(table+40));
+            const auto getter=image.rva_of(image.read<std::uintptr_t>(table+376));
+            if(matches_guard(setter,"8b4908440fb6c2ba0100000048ff25????????") &&
+               matches_guard(getter,"4c8bdc4883ec688b4908498d53b833c0")) {
+                visuals.set_visible=reinterpret_cast<song_visuals::SetVisible>(image.base+setter);
+                visuals.visible=reinterpret_cast<song_visuals::Visible>(image.base+getter);
+            }
+        }
+    }
+    if(visuals.ex_bg) {
+        const auto table=image.rva_of(visuals.ex_bg);
+        if(image.in_region(table,24,false)) {
+            const auto update=image.function(image.rva_of(image.read<std::uintptr_t>(table+8)));
+            const auto draw=image.rva_of(image.read<std::uintptr_t>(table+16));
+            if(matches(image,update,{0x4d,0x8b,0xac,0x24,0x18,2,0,0}).size()==1 &&
+               matches(image,update,{0x49,0x81,0xc5,0xc0,1,0,0}).size()==1 &&
+               matches_guard(draw,"4883ec2880b9300200000074??48895c2430488b997002000048897c2420488bb978020000"))
+                visuals.ex_draw=reinterpret_cast<std::uintptr_t>(image.base+draw);
+        }
+    }
+    unsigned renderers=0;
+    for(const auto f:image.functions) {
+        if(!clean_entry(image,f)) continue;
+        if(matches(image,f,{0x4c,0x8b,0xb6,0xb0,0,0,0,0x4c,0x8b,0xbe,0xb8,0,0,0}).size()==1 &&
+           matches(image,f,{0x48,0x8b,0x9e,0xc8,0,0,0,0x48,0x8b,0xbe,0xd0,0,0,0}).size()==1 &&
+           matches(image,f,{0xb0,1,0x48,0x83,0xc4,0x40}).size()==1) {
+            ++renderers; visuals.post_render=reinterpret_cast<std::uintptr_t>(image.base+f.begin);
+        }
+    }
+    if(renderers!=1) visuals.post_render=0;
+    // Native full-screen presenter used when a processor has no animated output
+    // roots. Reuse it for an untransformed frame while hiding those roots.
+    // Verify the complete body; only external rel32/RIP operands vary.
+    static constexpr std::string_view raw_presenter=
+        "4053574883ec7848c7442440feffffff488bd94883b9e800000000750932c04883c4785f5bc3"
+        "33c048898424a00000004889842498000000488b0d????????488b014c8d8424a000000033d2ff9030010000"
+        "488b0d????????488b01488d942498000000ff90400100004c8b8c24980000004c8b8424a0000000"
+        "488b15????????488d4c2458e8????????90488d0d????????e8????????488b8be8000000488b0133d2"
+        "488994249000000088942490000000889424940000004c8b842490000000488d542448ff502090488b00"
+        "488b580848899c24a80000004885db740a488b03488bcbff500890c7442430ffffffffc744242880070000"
+        "c7442420380400004533c0488bd3488b0d????????e8????????904885db740a488b03488bcbff501090"
+        "488b5c24504885db742dbfffffffff8bc7f00fc1430883e801751c488b03488bcbff10f00fc17b0c83ff01750a"
+        "488b03488bcbff500890488d4c2458e8????????90488b8c24980000004885c97407488b01ff501090"
+        "488b8c24a00000004885c97407488b01ff501090b0014883c4785f5bc3";
+    unsigned presenters=0;
+    for(const auto f:image.functions) {
+        if(f.end-f.begin!=raw_presenter.size()/2 || !clean_entry(image,f) || !matches_guard(f.begin,raw_presenter)) continue;
+        ++presenters;
+        visuals.present=reinterpret_cast<song_visuals::PostRender>(image.base+f.begin);
+    }
+    if(presenters!=1) visuals.present=nullptr;
     unsigned judgment_matches=0;
     for(const auto f:image.functions) {
         const std::string_view guard=f.end-f.begin==670?judgment_new:

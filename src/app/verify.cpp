@@ -34,6 +34,17 @@ int wmain(int argc,wchar_t** argv) {
     if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&
         automatic.layout.timer_vtable==base+a.game_timer_vtable) {
         targets.push_back(automatic.layout.judge-base);
+        if(automatic.layout.song_visuals) {
+            targets.push_back(automatic.layout.song_visuals.ex_draw-base);
+            targets.push_back(automatic.layout.song_visuals.post_render-base);
+            std::cout<<"Song visual control verified; post render RVA=0x"<<std::hex<<automatic.layout.song_visuals.post_render-base
+                     <<" raw presenter RVA=0x"<<reinterpret_cast<std::uintptr_t>(automatic.layout.song_visuals.present)-base<<std::dec<<'\n';
+        } else {
+            const auto& v=automatic.layout.song_visuals;
+            std::cerr<<"Song visual control unavailable: types="<<bool(v.ex_bg)<<bool(v.autopara)<<bool(v.post)<<bool(v.layer)<<bool(v.priority)
+                     <<" draw="<<bool(v.ex_draw)<<" render="<<bool(v.post_render)<<" visibility="<<bool(v.visible)<<bool(v.set_visible)
+                     <<" live2d="<<bool(v.live2d)<<bool(v.set_live2d_visible)<<" presenter="<<bool(v.present)<<'\n';
+        }
         if(automatic.layout.note_gate) {
             targets.push_back(automatic.layout.note_gate-base);
             std::cout<<"AutoPlay note gate RVA=0x"<<std::hex<<automatic.layout.note_gate-base<<std::dec<<'\n';

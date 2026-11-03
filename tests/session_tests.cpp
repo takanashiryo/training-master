@@ -106,8 +106,10 @@ int main() {
         command(s,Action::SetLoop,0); const auto saved_seeks=g.seeks; tick(s,g,121);
         check(g.seeks==saved_seeks && g.paused && s.snapshot().at_end && s.snapshot().in==100 && s.snapshot().out==120,
               "disabling loop at song end must retain selection and pause without rewinding");
-        Track automatic{"test.vox",12,3,120.f}; automatic.autoplay_ready=true;
+        Track automatic{"test.vox",12,3,120.f}; automatic.autoplay_ready=automatic.song_visuals_ready=true;
         s.begin(automatic,true);
+        command(s,Action::SetHideSongVisuals,1); tick(s,g,0);
+        check(!s.snapshot().hide_song_visuals && !s.suppress_result(),"song visuals cannot be hidden outside training");
         check(!s.snapshot().autoplay,"AutoPlay defaults off for each track");
         command(s,Action::SetAutoplayMode,1); tick(s,g,0);
         check(s.snapshot().autoplay_mode==AutoplayMode::Buttons && !s.snapshot().autoplay && !s.suppress_result(),
@@ -115,6 +117,10 @@ int main() {
         command(s,Action::SetAutoplay,1); tick(s,g,1);
         check(s.snapshot().autoplay && s.snapshot().enabled && s.suppress_result(),
               "AutoPlay must enable training and block results before native override");
+        command(s,Action::SetHideSongVisuals,1); tick(s,g,1);
+        check(s.snapshot().hide_song_visuals && s.suppress_result(),"training permits hiding song presentation");
+        command(s,Action::SetHideSongVisuals,0); tick(s,g,1);
+        check(!s.snapshot().hide_song_visuals && s.snapshot().enabled,"restoring song presentation preserves training");
         command(s,Action::SetAutoplayMode,2); tick(s,g,1);
         check(s.snapshot().autoplay_mode==AutoplayMode::Knobs && s.snapshot().autoplay && s.suppress_result(),
               "changing AutoPlay mode while enabled preserves result protection");

@@ -1,9 +1,11 @@
 #pragma once
 #include <windows.h>
 #include <cstdint>
+#include "game/song_visuals.hpp"
 
 namespace training::autoplay_discovery {
 struct Layout {
+    song_visuals::Layout song_visuals;
     std::uintptr_t update{}, draw{}, judge{};
     std::uintptr_t note_gate{};
     std::uintptr_t judgment_event{}, judgment_gauge{}, judgment_color_option{};

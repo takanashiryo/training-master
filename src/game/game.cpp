@@ -9,6 +9,7 @@
 #include "game/autoplay.hpp"
 #include "game/camera.hpp"
 #include "game/post_effect.hpp"
+#include "game/song_visuals.hpp"
 #include "game/lane_speed.hpp"
 #include "game/gauge.hpp"
 #include "game/judgment_filter.hpp"
@@ -33,6 +34,11 @@ ReversePlayer reverse_player;
 std::shared_ptr<ReverseAsset> reverse_asset;
 bool reverse_reported{};
 camera::Controller camera_control;
+song_visuals::Controller song_visual_control;
+bool song_visuals_ready{};
+Ptr(__fastcall* original_song_background_draw)(Ptr){};
+bool(__fastcall* original_song_post_render)(Ptr){};
+thread_local bool suppress_song_visuals{};
 camera::NemsysController nemsys_control;
 camera::JudgeLineController judge_line_control;
 camera::CursorController cursor_control;
@@ -241,6 +247,7 @@ std::string read_world_string(Ptr world,std::size_t offset) {
 Track read_track(Ptr world) {
     Track t;
     t.autoplay_ready=autoplay_ready;
+    t.song_visuals_ready=song_visuals_ready;
     t.camera_ready=camera_control.available(world);
     const char* lane_reason{};
     t.lane_speed_ready=lane_control.available(world,&lane_reason);
@@ -284,6 +291,7 @@ void stop_for_native_finish(Ptr world) {
 }
 void __fastcall world_update_hook(Ptr world) {
     const bool active=field<Ptr>(world,24)==image+native::addresses().play_state;
+    if(current_world==world || (active && current_world!=world)) song_visual_control.restore();
     if (active && current_world!=world) {
         if (current_world) {
             camera_control.before_update(current_world);
@@ -337,6 +345,8 @@ void __fastcall world_update_hook(Ptr world) {
     updating_world=world;
     camera_updated=false;
     const auto control=session.snapshot();
+    const bool previous_song_suppression=suppress_song_visuals;
+    suppress_song_visuals=control.playing && control.enabled && control.hide_song_visuals;
     judgment_recording=active && world==current_world && control.playing && !control.paused && !control.rewinding && !control.reversing;
     judgment_region={active && world==current_world && control.enabled && control.loop,control.in,control.out};
     const bool automatic=active && world==current_world && control.playing && control.enabled && control.autoplay &&
@@ -353,6 +363,7 @@ void __fastcall world_update_hook(Ptr world) {
     }
     updating_world=previous;
     suppress_posteffects=previous_suppression;
+    suppress_song_visuals=previous_song_suppression;
     judgment_recording=previous_recording;
     judgment_region=previous_region;
     if (current_world==world) {
@@ -372,6 +383,13 @@ void __fastcall world_update_hook(Ptr world) {
         GameBackend backend(world); session.end(backend);
         requested_rate=1.f;
         current_world=0;
+    }
+    if(current_world==world) {
+        const auto state=session.snapshot();
+        if(!song_visual_control.apply(world,state.playing && state.enabled && state.ready && state.hide_song_visuals)) {
+            session.song_visuals_unavailable();
+            log("Song visual context failed; native presentation restored: "+song_visual_control.error());
+        }
     }
 }
 char __fastcall play_state_hook(Ptr world) {
@@ -404,7 +422,13 @@ bool __fastcall posteffect_shake_hook(Ptr effect,const float* time) {
     const auto world=updating_world;
     if (!world || world!=current_world || (!suppress_posteffects && !is_tainted(world)))
         return original_posteffect_shake(effect,time);
-    return post_effect::update_shake(original_posteffect_shake,effect,time,suppress_posteffect_update(world));
+    return post_effect::update_shake(original_posteffect_shake,effect,time,suppress_song_visuals || suppress_posteffect_update(world));
+}
+Ptr __fastcall song_background_draw_hook(Ptr view) {
+    return song_visual_control.hides_view(view)?0:original_song_background_draw(view);
+}
+bool __fastcall song_post_render_hook(Ptr effect) {
+    return song_visual_control.render(original_song_post_render,effect);
 }
 void __fastcall camera_update_hook(Ptr updater) {
     original_camera_update(updater);
@@ -554,12 +578,14 @@ void __fastcall timer_update_hook(Ptr timer) {
     const float cursor=state.reversing && reverse_player.owns_bus()?static_cast<float>(reverse_player.position()):position(timer);
     session.tick(cursor,field<std::uint8_t>(timer,16)==0,backend,static_cast<float>(elapsed));
     const auto after=session.snapshot();
+    suppress_song_visuals=after.playing && after.enabled && after.hide_song_visuals;
     judgment_region={after.playing && after.enabled && after.loop,after.in,after.out};
     judgment_recording=after.playing && !after.paused && !after.rewinding && !after.reversing;
     if (session.suppress_result()) mark_tainted(world);
 }
 void __fastcall destroy_hook(Ptr world) {
     if (current_world==world) {
+        song_visual_control.restore();
         camera_control.before_update(world); camera_control.reset();
         GameBackend backend(world); session.end(backend);
         current_world=0; requested_rate=1.f;
@@ -678,6 +704,9 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         else log("Song information unavailable: "+catalog_error);
     }
     const auto discovered=autoplay_discovery::resolve(module);
+    song_visuals_ready=discovered && discovered.layout.draw && static_cast<bool>(discovered.layout.song_visuals);
+    if(song_visuals_ready) song_visual_control.configure(discovered.layout.song_visuals);
+    else log("Song visual control unavailable: presentation layout not verified");
     const auto& a=native::addresses();
     camera_control.configure({image+a.world_vtable,image+a.renderer_vtable,image+a.camera_engine_vtable,
         image+a.camera_world_vtable,image+a.camera_space_vtable,
@@ -769,11 +798,21 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
     if (autoplay_ready) hooks.push_back({discovered.layout.note_gate-image,reinterpret_cast<void*>(note_gate_hook),reinterpret_cast<void**>(&original_note_gate)});
     if (judgment_ready) hooks.push_back({discovered.layout.judgment_event-image,
         reinterpret_cast<void*>(judgment_event_hook),reinterpret_cast<void**>(&original_judgment_event)});
+    if(song_visuals_ready) {
+        hooks.push_back({discovered.layout.song_visuals.ex_draw-image,reinterpret_cast<void*>(song_background_draw_hook),reinterpret_cast<void**>(&original_song_background_draw)});
+        hooks.push_back({discovered.layout.song_visuals.post_render-image,reinterpret_cast<void*>(song_post_render_hook),reinterpret_cast<void**>(&original_song_post_render)});
+    }
     std::vector<void*> created;
     for (const auto& h:hooks) {
         auto* address=reinterpret_cast<void*>(image+h.rva);
         const auto status=MH_CreateHook(address,h.detour,h.original);
         if (status!=MH_OK) {
+            if(discovered.layout.song_visuals &&
+               (h.rva==discovered.layout.song_visuals.ex_draw-image || h.rva==discovered.layout.song_visuals.post_render-image)) {
+                song_visuals_ready=false;
+                log(std::string("Song presentation hook unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
             if(discovered.layout.draw && h.rva==discovered.layout.draw-image) {
                 log(std::string("Gameplay draw context hook unavailable: ")+MH_StatusToString(status));
                 continue;

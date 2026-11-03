@@ -32,6 +32,7 @@ Open game then press `Insert`
 | AutoPlay | Native automatic play: All, Buttons only, or Knobs only |
 | Lane speed | Lock lane speed |
 | Camera | Block camera movement during training |
+| Song visuals (Experimental) | Hide extra sprite animations, screen effects and Live2D; some effects cannot be removed |
 | Gauge | Override the gauge type and initial value |
 
 ## 3rd Party
@@ -50,4 +51,4 @@ UI design by human
 - [x] Judgement Counter 
 - [x] Playback Rate Upper To 2.0x
 - [x] Autoplay can set separately for button or tsumami
-- [ ] Disable special chart showcase
+- [x] Disable special chart showcase
