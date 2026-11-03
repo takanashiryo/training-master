@@ -39,6 +39,10 @@ bool get_visibility(Visible get,Ptr layer,bool& saved) {
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+bool send_event(Event handler,Ptr recipient,Ptr range) {
+    __try { handler(recipient,range); return true; }
+    __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 struct Bounds { Ptr begin,end,capacity; };
 Bounds shader_bounds(Ptr effect) {
     const auto bounds=read<Bounds>(effect,176);
@@ -169,6 +173,66 @@ void Controller::restore() {
     views_.clear(); effects_.clear();
 }
 bool Controller::hides_view(Ptr view) const { return has(views_,view); }
+bool Controller::transport(Ptr world,bool seeking,Event post_original,std::uint64_t now_ms) {
+    constexpr std::uint64_t settle_ms=150;
+    if(reset_world_!=world) {
+        reset_world_=world; interrupted_=dirty_=false;
+    }
+    const bool recent=interrupted_ && now_ms>=last_seek_ms_ && now_ms-last_seek_ms_<settle_ms;
+    if(seeking) {
+        last_seek_ms_=now_ms;
+        // Reverse playback and slider dragging call seek each frame. Native
+        // Reset reconstructs GPU resources: never do that for each sample.
+        if(interrupted_) return true;
+    } else {
+        if(!interrupted_ || recent) return true;
+        // End a navigation burst. Clean up any effects triggered while moving
+        // once, before this frame's native event delivery resumes.
+        interrupted_=false;
+        if(!dirty_) return true;
+    }
+    restore();
+    error_.clear();
+    if(!world || !layout_.can_reset() || !post_original) {
+        error_="Song animation reset layout is not verified"; return false;
+    }
+    try {
+        // Collect and validate all recipients before dispatching anything.
+        std::vector<std::pair<Ptr,Event>> recipients;
+        for(unsigned offset:{440u,464u}) array(world,offset,16,[&](Ptr entry) {
+            const auto view=read<Ptr>(entry);
+            if(!view) return;
+            const auto table=read<Ptr>(view);
+            if(table!=layout_.post) return;
+            if(read<Ptr>(view,8)!=layout_.post_events) throw std::runtime_error("Unexpected post-effect event interface");
+            if(std::none_of(recipients.begin(),recipients.end(),[&](auto r){return r.first==view+8;}))
+                recipients.emplace_back(view+8,post_original);
+        });
+        // Native handlers consume only the tag for Reset (35). No variant with
+        // owning strings/shared_ptrs is constructed, copied or destroyed here.
+        alignas(8) unsigned char event[272]{};
+        const unsigned reset=35; std::memcpy(event,&reset,sizeof(reset));
+        const auto begin=reinterpret_cast<Ptr>(event);
+        Ptr range[]{begin,begin+sizeof(event),begin+sizeof(event)};
+        for(auto [recipient,handler]:recipients)
+            if(!send_event(handler,recipient,reinterpret_cast<Ptr>(range)))
+                throw std::runtime_error("Native animation reset failed");
+        interrupted_=seeking; dirty_=false;
+        return true;
+    } catch(const std::exception& e) { error_=e.what(); }
+    return false;
+}
+void Controller::post_events(Ptr events) {
+    if(!events) return;
+    if(!interrupted_) return;
+    // Commands may recreate effects during navigation. Remember the cleanup
+    // obligation, without forcing the next per-frame seek to rebuild again.
+    try {
+        array(events,0,272,[&](Ptr event) {
+            if(read<unsigned>(event)==40) dirty_=true;
+        });
+    } catch(...) { dirty_=true; }
+}
 bool Controller::hides_effect(Ptr effect) const {
     return std::any_of(effects_.begin(),effects_.end(),[&](const auto& e){return e.owner==effect;});
 }

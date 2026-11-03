@@ -292,6 +292,15 @@ Result resolve_impl(HMODULE module) {
     visuals.priority=table_address(".?AVPriorityRangePostEffector@Game@@");
     visuals.target=table_address(".?AVCPriorityRangeRenderTarget@@");
     visuals.live2d=table_address(".?AVCLive2DCrewComponent@@");
+    const auto post_events=image.vtable(".?AVGamePostEffectView@Game@@",8);
+    if(post_events && image.in_region(post_events,16,false)) {
+        const auto post=image.rva_of(image.read<std::uintptr_t>(post_events+8));
+        const auto post_function=image.function(post);
+        if(clean_entry(image,post_function)) {
+            visuals.post_events=reinterpret_cast<std::uintptr_t>(image.base+post_events);
+            visuals.post_event=reinterpret_cast<song_visuals::Event>(reinterpret_cast<std::uintptr_t>(image.base+post));
+        }
+    }
     if(visuals.live2d) {
         const auto table=image.rva_of(visuals.live2d);
         if(image.in_region(table,72,false)) {

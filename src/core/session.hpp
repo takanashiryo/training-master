@@ -78,6 +78,7 @@ public:
     void submit(Command command);
     void tick(float position, bool native_paused, Backend& backend,float elapsed_seconds=0.f);
     State snapshot() const;
+    bool navigation_active() const;
     bool suppress_result() const;
     bool native_exit_locked() const;
     void result_blocked();

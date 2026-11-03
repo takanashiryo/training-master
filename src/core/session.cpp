@@ -62,9 +62,22 @@ void Session::end(Backend& backend) {
 }
 void Session::submit(Command command) {
     std::lock_guard lock(mutex_);
+    // A slow game frame may receive many slider samples. Only the latest
+    // consecutive target matters; preserve ordering around all other actions.
+    if(command.action==Action::Seek && !commands_.empty() &&
+       commands_.back().action==Action::Seek && commands_.back().generation==command.generation) {
+        commands_.back()=command; return;
+    }
     if (commands_.size() < 128) commands_.push_back(command);
 }
 State Session::snapshot() const { std::lock_guard lock(mutex_); return state_; }
+bool Session::navigation_active() const {
+    std::lock_guard lock(mutex_);
+    return state_.rewinding || (state_.reversing && !state_.paused) ||
+        std::any_of(commands_.begin(),commands_.end(),[&](const auto& c) {
+            return c.generation==state_.generation && c.action==Action::Seek;
+        });
+}
 bool Session::suppress_result() const { std::lock_guard lock(mutex_); return state_.tainted; }
 bool Session::native_exit_locked() const { std::lock_guard lock(mutex_); return state_.tainted && !state_.finish_requested; }
 void Session::result_blocked() { std::lock_guard lock(mutex_); ++state_.blocked_results; }

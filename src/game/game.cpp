@@ -36,6 +36,7 @@ bool reverse_reported{};
 camera::Controller camera_control;
 song_visuals::Controller song_visual_control;
 bool song_visuals_ready{};
+bool song_animation_ready{};
 Ptr(__fastcall* original_song_background_draw)(Ptr){};
 bool(__fastcall* original_song_post_render)(Ptr){};
 thread_local bool suppress_song_visuals{};
@@ -146,6 +147,12 @@ bool transport_seek(Ptr world, float target,bool seek_audio=true) {
         if (!timer || !std::isfinite(target)) return false;
         if(updating_world==world && current_world==world) suppress_posteffects=true;
         float delta=target-position(timer);
+        if(current_world==world && song_animation_ready && std::fabs(delta)>.000001f &&
+           !song_visual_control.transport(world,true,original_posteffect_event,GetTickCount64())) {
+            log("Post-effect cleanup before seek failed");
+            log(song_visual_control.error());
+            return false;
+        }
         fn<void(__fastcall*)(Ptr,const float*)>(native::addresses().timer_seek)(timer,&delta);
         // The native seek notification invalidates DrawTimer. Commit before resetting notes.
         const auto draw=field<Ptr>(world,248);
@@ -329,6 +336,15 @@ void __fastcall world_update_hook(Ptr world) {
         }
     }
     if (current_world==world) {
+        // Settle navigation before native event delivery, not after it has
+        // restored the current stage. This also covers a paused slider release.
+        if(song_animation_ready && !session.navigation_active() &&
+           !song_visual_control.transport(world,false,original_posteffect_event,GetTickCount64())) {
+            song_animation_ready=false;
+            GameBackend backend(world); backend.reverse(false); backend.pause(true);
+            const auto state=session.snapshot(); session.submit({state.generation,Action::Pause});
+            log("Post-effect cleanup after navigation failed"); log(song_visual_control.error());
+        }
         if(!session.camera_requested()) { cursor_control.reset(); visual_control.reset(); }
         if(!lane_control.before_update(world)) lane_fault=true;
         if (!camera_control.before_update(world) && !camera_reported) {
@@ -416,13 +432,20 @@ bool suppress_posteffect_update(Ptr world) {
     return timer && field<std::uint8_t>(timer,16)==0;
 }
 Ptr __fastcall posteffect_event_hook(Ptr effect,Ptr events) {
-    return post_effect::dispatch(original_posteffect_event,effect,events,suppress_posteffect_update(updating_world));
+    const auto world=camera::visual_world(updating_world,drawing_world);
+    if(song_animation_ready && world && world==current_world) {
+        song_visual_control.post_events(events);
+        return original_posteffect_event(effect,events);
+    }
+    return post_effect::dispatch(original_posteffect_event,effect,events,
+        suppress_posteffect_update(camera::visual_world(updating_world,drawing_world)));
 }
 bool __fastcall posteffect_shake_hook(Ptr effect,const float* time) {
     const auto world=updating_world;
     if (!world || world!=current_world || (!suppress_posteffects && !is_tainted(world)))
         return original_posteffect_shake(effect,time);
-    return post_effect::update_shake(original_posteffect_shake,effect,time,suppress_song_visuals || suppress_posteffect_update(world));
+    return post_effect::update_shake(original_posteffect_shake,effect,time,suppress_song_visuals ||
+        (song_animation_ready?suppress_posteffects:suppress_posteffect_update(world)));
 }
 Ptr __fastcall song_background_draw_hook(Ptr view) {
     return song_visual_control.hides_view(view)?0:original_song_background_draw(view);
@@ -705,9 +728,12 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
     }
     const auto discovered=autoplay_discovery::resolve(module);
     song_visuals_ready=discovered && discovered.layout.draw && static_cast<bool>(discovered.layout.song_visuals);
-    if(song_visuals_ready) song_visual_control.configure(discovered.layout.song_visuals);
+    if(discovered && (song_visuals_ready || discovered.layout.song_visuals.can_reset())) song_visual_control.configure(discovered.layout.song_visuals);
     else log("Song visual control unavailable: presentation layout not verified");
     const auto& a=native::addresses();
+    song_animation_ready=discovered && discovered.layout.song_visuals.can_reset() &&
+        reinterpret_cast<Ptr>(discovered.layout.song_visuals.post_event)==image+a.posteffect_event;
+    if(!song_animation_ready) log("Song animation reset unavailable: event ABI not verified");
     camera_control.configure({image+a.world_vtable,image+a.renderer_vtable,image+a.camera_engine_vtable,
         image+a.camera_world_vtable,image+a.camera_space_vtable,
         fn<camera::Rebuild>(a.camera_rebuild_space),fn<camera::SetView>(a.camera_set_view),native::world_layout()});

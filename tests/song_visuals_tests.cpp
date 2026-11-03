@@ -72,10 +72,52 @@ void sprite_effect_regression() {
     controller.restore();
     check(glass.shown,"clearing hide mode must restore extra sprite effects");
 }
+std::vector<Ptr> reset_recipients;
+Ptr __fastcall reset_event(Ptr self,Ptr vector) {
+    const auto* range=reinterpret_cast<const Ptr*>(vector);
+    check(range[1]-range[0]==272 && range[2]==range[1],"reset must be one borrowed native event");
+    check(*reinterpret_cast<const unsigned*>(range[0])==35,"reset must use native Reset tag");
+    reset_recipients.push_back(self);
+    return 0;
+}
+void transport_reset_regression() {
+    Layout layout;
+    layout.ex_bg=1; layout.post=2; layout.post_events=4;
+    layout.post_event=reset_event;
+    Bytes<512> world,other_world;
+    Bytes<32> background,post,lane;
+    background.put(0,layout.ex_bg);
+    post.put(0,layout.post); post.put(8,layout.post_events); lane.put<Ptr>(0,99);
+    Ptr views[]{background.ptr(),0,post.ptr(),0,lane.ptr(),0};
+    for(auto* w:{&world,&other_world}) {
+        w->put(440,reinterpret_cast<Ptr>(views)); w->put(448,reinterpret_cast<Ptr>(views)+sizeof(views));
+        // A view can occur in both native groups; reset it only once.
+        w->put(464,reinterpret_cast<Ptr>(views)); w->put(472,reinterpret_cast<Ptr>(views)+sizeof(views));
+    }
+    Controller controller; controller.configure(layout); reset_recipients.clear();
+    check(controller.transport(world.ptr(),false,reset_event,0) && reset_recipients.empty(),"normal playback must not reset animations");
+    check(controller.transport(world.ptr(),true,reset_event,0),"seek must clear stale post effects");
+    check(reset_recipients==std::vector<Ptr>{post.ptr()+8},"background stages must survive post-effect cleanup");
+    for(int i=1;i<=120;++i) check(controller.transport(world.ptr(),true,reset_event,i*16),"continuous reverse reset policy");
+    check(reset_recipients.size()==1,"reverse without new commands must not rebuild resources each frame");
+    Bytes<272> event; event.put<unsigned>(0,40);
+    Ptr events[]{event.ptr(),event.ptr()+272,event.ptr()+272};
+    controller.post_events(reinterpret_cast<Ptr>(events));
+    check(controller.transport(world.ptr(),true,reset_event,2000) && reset_recipients.size()==1,"new commands must not cause per-frame rebuilds during reverse");
+    check(controller.transport(world.ptr(),false,reset_event,2016) && reset_recipients.size()==1,"short gaps during dragging must retain the navigation episode");
+    check(controller.transport(world.ptr(),false,reset_event,2150) && reset_recipients.size()==2,"settled navigation clears recreated effects once");
+    check(controller.transport(world.ptr(),false,reset_event,2200) && reset_recipients.size()==2,"idle frames must not repeat cleanup");
+    check(controller.transport(world.ptr(),true,reset_event,2300) && reset_recipients.size()==3,"next navigation clears newly triggered animations");
+    check(controller.transport(other_world.ptr(),true,reset_event,2301) && reset_recipients.size()==4,"a new world must not reuse the previous reset latch");
+    post.put<Ptr>(8,99);
+    check(controller.transport(world.ptr(),false,reset_event,2400),"rearm validation fixture");
+    check(!controller.transport(world.ptr(),true,reset_event,2401) && reset_recipients.size()==4,"invalid recipients must prevent reset");
+}
 void native_render_regression(HMODULE module) {
     const auto discovered=training::autoplay_discovery::resolve(module);
     check(discovered && discovered.layout.song_visuals,"native presentation render discovery");
     auto layout=discovered.layout.song_visuals;
+    check(layout.can_reset(),"native animation event discovery");
     layout.visible=visible; layout.set_visible=set_visible;
     check(layout.present!=nullptr,"native raw presentation discovery");
     layout.present=present_frame;
@@ -148,6 +190,42 @@ void native_render_regression(HMODULE module) {
     composition_surface=nullptr;
     std::cout<<"120 native capture/composition frames, shader bypass and exception restoration passed\n";
 }
+int retired_animation_callbacks{};
+void __fastcall retire_animation_callback(Ptr,Ptr) { ++retired_animation_callbacks; }
+void native_transport_reset_regression(HMODULE module) {
+    const auto discovered=training::autoplay_discovery::resolve(module);
+    check(discovered && discovered.layout.song_visuals.can_reset(),"native reset discovery");
+    const auto layout=discovered.layout.song_visuals;
+    Bytes<512> world;
+    Bytes<736> background;
+    Bytes<96> post;
+    Bytes<64> queue;
+    Ptr callback_table[]{0,0,0,0,reinterpret_cast<Ptr>(retire_animation_callback)};
+    Ptr callback=reinterpret_cast<Ptr>(callback_table);
+    background.put(0,layout.ex_bg);
+    background.put<unsigned char>(560,1); background.put<unsigned char>(673,1);
+    queue.put(56,reinterpret_cast<Ptr>(&callback));
+    background.put(704,queue.ptr()); background.put(712,queue.ptr()+64); background.put(720,queue.ptr()+64);
+    post.put(0,layout.post); post.put(8,layout.post_events);
+    // Borrow an existing processor slot, with no native definitions/resources
+    // to reconstruct. The real handler must retire it on the reset event.
+    Ptr processors[]{1,0};
+    post.put(64,reinterpret_cast<Ptr>(processors)); post.put(72,reinterpret_cast<Ptr>(processors)+16);
+    post.put(80,reinterpret_cast<Ptr>(processors)+16);
+    Ptr views[]{background.ptr(),0,post.ptr(),0};
+    world.put(440,reinterpret_cast<Ptr>(views)); world.put(448,reinterpret_cast<Ptr>(views)+sizeof(views));
+    Controller controller; controller.configure(layout); retired_animation_callbacks=0;
+    check(controller.transport(world.ptr(),false,layout.post_event,0),"normal native transport");
+    check(retired_animation_callbacks==0,"normal playback retains active animations");
+    check(controller.transport(world.ptr(),true,layout.post_event,1),"native transport reset");
+    check(*reinterpret_cast<const Ptr*>(post.ptr()+72)==reinterpret_cast<Ptr>(processors),"reset must remove the stale post processor");
+    check(*reinterpret_cast<const Ptr*>(background.ptr()+712)==queue.ptr()+64 &&
+          *reinterpret_cast<const Ptr*>(queue.ptr()+56) && retired_animation_callbacks==0 && background.data[673],
+          "post cleanup must preserve the native background stage and queued animation");
+    check(controller.transport(world.ptr(),true,layout.post_event,17) && retired_animation_callbacks==0,
+          "continuous reverse must preserve background callbacks");
+    std::cout<<"Native transport cleanup retires post processors and preserves background stages\n";
+}
 void native_live2d_regression(HMODULE module) {
     const auto discovered=training::autoplay_discovery::resolve(module);
     check(discovered && discovered.layout.song_visuals,"native song presentation discovery");
@@ -194,10 +272,11 @@ void native_live2d_regression(HMODULE module) {
 int wmain(int argc,wchar_t** argv) {
     try {
         sprite_effect_regression();
+        transport_reset_regression();
         if(argc==2) {
             const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
             check(module!=nullptr,"native module mapping failed");
-            try { native_render_regression(module); native_live2d_regression(module); }
+            try { native_render_regression(module); native_transport_reset_regression(module); native_live2d_regression(module); }
             catch(...) { FreeLibrary(module); throw; }
             FreeLibrary(module);
         }
