@@ -42,6 +42,12 @@ unsigned game_moves{},game_cursor_messages{};
 unsigned game_button_ups{};
 unsigned game_raw_mouse{},game_raw_keyboard{};
 unsigned game_wheels{};
+unsigned game_touch_messages{};
+DWORD direct_proc_exception{};
+bool call_touch_proc_direct(WNDPROC proc,HWND window) {
+    __try { proc(window,WM_TOUCH,1,0x1234); return true; }
+    __except((direct_proc_exception=GetExceptionCode()),EXCEPTION_EXECUTE_HANDLER) { return false; }
+}
 bool subscreen_probe{},subscreen_contact{};
 unsigned subscreen_clicks{},subscreen_drags{};
 // Spice2x's native mouse-to-touch path starts/updates/ends contacts from
@@ -71,6 +77,7 @@ BOOL hardware_cursor=TRUE;
 unsigned hardware_cursor_changes{};
 BOOL WINAPI cursor_probe(IDirect3DDevice9*,BOOL value) { ++hardware_cursor_changes; const BOOL previous=hardware_cursor; hardware_cursor=value; return previous; }
 LRESULT CALLBACK game_proc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if(message==WM_TOUCH) { ++game_touch_messages; return 0; }
     if(subscreen_probe) subscreen_mouse_message(window,message,wparam,lparam);
     if(message==WM_MOUSEWHEEL) ++game_wheels;
     if(message==WM_MOUSEMOVE) ++game_moves;
@@ -144,10 +151,16 @@ int main(int argc,char** argv) {
     try {
         const std::string mode=argc>3?argv[3]:"present";
         const bool windowed=mode.starts_with("windowed");
+        const bool ansi_touch=mode=="windowed-ansi-touch";
+        const bool direct_touch=ansi_touch || mode=="windowed-unicode-touch";
         WNDCLASSW wc{}; wc.hInstance=GetModuleHandleW(nullptr); wc.lpfnWndProc=game_proc; wc.lpszClassName=L"TrainingRenderRegression";
         RegisterClassW(&wc);
         RECT rect{0,0,960,600}; AdjustWindowRect(&rect,WS_OVERLAPPEDWINDOW,FALSE);
-        HWND window=CreateWindowW(wc.lpszClassName,L"",WS_OVERLAPPEDWINDOW,0,0,
+        WNDCLASSA ansi_class{}; ansi_class.hInstance=wc.hInstance; ansi_class.lpfnWndProc=game_proc;
+        ansi_class.lpszClassName="TrainingAnsiTouchRegression";
+        if(ansi_touch) RegisterClassA(&ansi_class);
+        HWND window=ansi_touch?CreateWindowA(ansi_class.lpszClassName,"",WS_OVERLAPPEDWINDOW,0,0,
+            rect.right-rect.left,rect.bottom-rect.top,nullptr,nullptr,wc.hInstance,nullptr):CreateWindowW(wc.lpszClassName,L"",WS_OVERLAPPEDWINDOW,0,0,
             windowed?rect.right-rect.left:1360,windowed?rect.bottom-rect.top:900,
             nullptr,nullptr,wc.hInstance,nullptr);
         if (!window) throw std::runtime_error("window creation failed");
@@ -174,6 +187,26 @@ int main(int argc,char** argv) {
         if (MH_Initialize()!=MH_OK) throw std::runtime_error("MinHook init failed");
         training::Session session; std::string reason;
         if (!training::install_overlay(session,reason)) throw std::runtime_error(reason);
+        if(direct_touch) {
+            pass(device.Get()); require(display(),"ANSI touch warmup Present failed");
+            // Legacy spice2x polls GetWindowLongPtrA and invokes the returned
+            // WNDPROC directly when injecting WM_TOUCH in fullscreen mode.
+            if((IsWindowUnicode(window)!=FALSE)==ansi_touch)
+                throw std::runtime_error("overlay subclass must preserve the game's window procedure encoding");
+            const auto get_proc=ansi_touch?GetWindowLongPtrA:GetWindowLongPtrW;
+            const auto current=reinterpret_cast<WNDPROC>(get_proc(window,GWLP_WNDPROC));
+            const bool delivered=call_touch_proc_direct(current,window);
+            std::cout<<"Spice-style direct "<<(ansi_touch?"ANSI":"Unicode")<<" WM_TOUCH: proc=0x"<<std::hex<<reinterpret_cast<std::uintptr_t>(current)
+                <<", exception=0x"<<direct_proc_exception<<std::dec<<", delivered="<<delivered<<'\n';
+            if(!delivered || game_touch_messages!=1)
+                throw std::runtime_error("overlay subclass returns an ANSI/Wide conversion thunk that legacy spice2x cannot call directly");
+            training::show_overlay(true); pass(device.Get()); require(display(),"ANSI touch open Present failed");
+            if(!call_touch_proc_direct(current,window) || game_touch_messages!=2)
+                throw std::runtime_error("spice2x WM_TOUCH must still pass through while the training panel is open");
+            MH_DisableHook(MH_ALL_HOOKS); MH_Uninitialize();
+            training::shutdown_imgui(); DestroyWindow(window);
+            return 0;
+        }
         if(windowed) {
             hotkey_window=window;
             void* unused{};

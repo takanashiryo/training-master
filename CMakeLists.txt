@@ -157,6 +157,8 @@ add_test(NAME training_overlay_render_windowed COMMAND training_overlay_render_t
 add_test(NAME training_overlay_render_windowed_focus COMMAND training_overlay_render_tests 1 0 windowed-focus)
 add_test(NAME training_overlay_coexistence COMMAND training_overlay_render_tests 1 0 windowed-coexist)
 add_test(NAME training_overlay_fullscreen_cursor COMMAND training_overlay_render_tests 1 0 windowed-fullscreen)
+add_test(NAME training_overlay_ansi_touch COMMAND training_overlay_render_tests 1 0 windowed-ansi-touch)
+add_test(NAME training_overlay_unicode_touch COMMAND training_overlay_render_tests 1 0 windowed-unicode-touch)
 add_test(NAME training_overlay_hotkey COMMAND training_overlay_render_tests 1 0 hotkey)
 add_executable(training_reverse_audio_tests tests/reverse_audio_tests.cpp)
 target_link_libraries(training_reverse_audio_tests PRIVATE training_reverse_audio)

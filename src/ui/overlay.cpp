@@ -189,6 +189,7 @@ std::atomic<unsigned> overlay_mouse_buttons{};
 unsigned forwarded_mouse_buttons{}; // Guarded by imgui_mutex, like the ImGui input queue.
 HWND game_window{};
 WNDPROC old_proc{};
+bool game_window_unicode{true};
 IDirect3DDevice9* game_device{};
 IDirect3DDevice9* cover_device{};
 IDirect3DTexture9* cover_texture{};
@@ -349,7 +350,8 @@ ResetEx original_reset_ex{};
 LRESULT CALLBACK window_proc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
     bool consumed=false;
     input_imgui(window,message,wparam,lparam,consumed);
-    return consumed?1:CallWindowProcW(old_proc,window,message,wparam,lparam);
+    const auto previous=game_window_unicode?CallWindowProcW:CallWindowProcA;
+    return consumed?1:previous(old_proc,window,message,wparam,lparam);
 }
 // Render target/depth bindings are NOT part of D3DSBT_ALL. ImGui's DX9 backend
 // already preserves the ordinary draw state; keep only our additional changes here.
@@ -420,8 +422,14 @@ void present_overlay(IDirect3DDevice9* device,HWND destination) {
             DWORD pid{}; GetWindowThreadProcessId(output,&pid);
             if (pid==GetCurrentProcessId() && init_imgui(output,device)) {
                 game_window=output;
+                // Legacy spice2x calls GetWindowLongPtrA's result directly for
+                // fullscreen WM_TOUCH injection. Installing a Wide proc on an
+                // ANSI game window makes that result an opaque 0xFFFF... A/W
+                // conversion handle, which cannot be invoked as a function.
+                game_window_unicode=IsWindowUnicode(game_window)!=FALSE;
+                const auto subclass=game_window_unicode?SetWindowLongPtrW:SetWindowLongPtrA;
                 SetLastError(0);
-                old_proc=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(game_window,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(window_proc)));
+                old_proc=reinterpret_cast<WNDPROC>(subclass(game_window,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(window_proc)));
                 if (!old_proc && GetLastError()!=0) {
                     shutdown_imgui();
                     log("Could not attach overlay input handler");
