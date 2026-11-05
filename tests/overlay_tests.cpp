@@ -32,7 +32,7 @@ void only_message(const std::string& text,const char* expected) {
         if (start==std::string::npos) continue;
         line=line.substr(start,line.find_last_not_of(" \t\r")-start+1);
         auto menu=line; menu.erase(std::remove_if(menu.begin(),menu.end(),[](char c){return c==' ' || c=='[' || c==']';}),menu.end());
-        if (line=="Training Master" || menu=="About" || menu=="Option" || menu=="OptionAbout") continue;
+        if (line=="Training Master" || menu=="About" || menu=="Option" || menu=="Shortcut" || menu=="OptionShortcutAbout") continue;
         check(line==expected,("idle/error panel unexpected text: "+line).c_str()); ++count;
     }
     check(count==1,"specified message must be rendered exactly once");

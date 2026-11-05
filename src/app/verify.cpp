@@ -31,6 +31,11 @@ int wmain(int argc,wchar_t** argv) {
     std::vector<std::uintptr_t> targets{a.world_update,a.world_destroy,a.collect_result,a.timer_update,a.audio_feed,a.request_next,a.serialize_result,a.can_continue,a.flow_decision,a.camera_update,a.lane_timing_constructor,a.hisp_update,a.hisp_event,a.gauge_hud_event,a.play_state,a.posteffect_event,a.posteffect_shake};
     const auto automatic=training::autoplay_discovery::resolve(module);
     const auto base=reinterpret_cast<std::uintptr_t>(module);
+    if(automatic && automatic.layout.input_device_slot) {
+        std::cout<<"Game shortcut input slot RVA=0x"<<std::hex<<automatic.layout.input_device_slot-base<<std::dec<<'\n';
+        targets.push_back(automatic.layout.input_check_update-base);
+        std::cout<<"Game shortcut native force-crash guard RVA=0x"<<std::hex<<automatic.layout.input_check_update-base<<std::dec<<'\n';
+    } else std::cout<<"Game shortcut input unavailable\n";
     if (automatic && automatic.layout.update==base+a.world_update && automatic.layout.world_vtable==base+a.world_vtable &&
         automatic.layout.timer_vtable==base+a.game_timer_vtable) {
         targets.push_back(automatic.layout.judge-base);

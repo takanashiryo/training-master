@@ -180,6 +180,43 @@ bool clean_entry(const Image& image, Function f,unsigned prefix_length=16) {
 }
 bool field(std::uint32_t value) { return value >= 8 && value < 0x4000 && value % 8 == 0; }
 
+std::uintptr_t resolve_game_input(const Image& image,Layout& layout) {
+    // This native checker explicitly tests START, FX-L and FX-R. Anchor to
+    // its RTTI, not an RVA, and require all three reads to share one IO slot.
+    const auto table=image.vtable(".?AVGameInputCheckRequestForceTrackCrash@Game@@");
+    if(!table || !image.in_region(table+8,8,false)) return 0;
+    const auto f=image.function(image.rva_of(image.read<std::uintptr_t>(table+8)));
+    if(!clean_entry(image,f)) return 0;
+    // The owned checker can be neutralized only with a verified request flag
+    // and hold timer ABI. The native player otherwise turns this chord into
+    // fatal gauge records before the world's forced-end flag can be blocked.
+    if(matches(image,f,{0xc6,0x43,0x10,1,0xf3,0x0f,0x58,0x73,0x14,0xf3,0x0f,0x11,0x73,0x14}).size()!=1 ||
+       matches(image,f,{0xc6,0x43,0x10,0,0xc7,0x43,0x14,0,0,0,0}).size()!=1) return 0;
+    std::uint32_t slot{};
+    for(int offset:{0x68,0x7c,0x80}) {
+        const auto reads=matches(image,f,{0x48,0x8b,0x0d,-1,-1,-1,-1,0x83,0xb9,offset,0x81,0,0,0});
+        if(reads.size()!=1) return 0;
+        const auto target=static_cast<std::int64_t>(reads[0])+7+image.read<std::int32_t>(reads[0]+3);
+        if(target<0 || target>UINT32_MAX || !image.in_region(static_cast<std::uint32_t>(target),8,false)) return 0;
+        if(slot && slot!=target) return 0;
+        slot=static_cast<std::uint32_t>(target);
+    }
+    // Independently verify the 16-bit encoder counter, its previous sample
+    // and signed wraparound subtraction against that same IO singleton.
+    unsigned encoders=0;
+    for(const auto method:image.functions) {
+        const auto reads=matches(image,method,{0x48,0x8b,0x15,-1,-1,-1,-1,0x8b,0x4d,0,
+            0x48,0x83,0xf9,2,0x0f,0x83,-1,-1,-1,-1,
+            0x0f,0xb7,0x84,0xca,0x5c,0x81,0,0,0x66,0x2b,0x84,0xca,0x58,0x81,0,0,0x0f,0xbf,0xf8});
+        for(const auto at:reads)
+            if(static_cast<std::int64_t>(at)+7+image.read<std::int32_t>(at+3)==slot) ++encoders;
+    }
+    if(encoders!=1) return 0;
+    layout.input_check_vtable=reinterpret_cast<std::uintptr_t>(image.base+table);
+    layout.input_check_update=reinterpret_cast<std::uintptr_t>(image.base+f.begin);
+    return reinterpret_cast<std::uintptr_t>(image.base+slot);
+}
+
 Result resolve_impl(HMODULE module) {
     Image image(module);
     if (!image.initialize()) return {{}, "Invalid or unreadable x64 PE image/exception directory"};
@@ -539,6 +576,7 @@ Result resolve_impl(HMODULE module) {
             layout.knob_bomb_event=reinterpret_cast<std::uintptr_t>(image.base+event);
         }
     }
+    layout.input_device_slot=resolve_game_input(image,layout);
     return {layout, nullptr};
 }
 

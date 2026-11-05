@@ -13,6 +13,7 @@
 #include "game/lane_speed.hpp"
 #include "game/gauge.hpp"
 #include "game/judgment_filter.hpp"
+#include "game/game_input.hpp"
 #include <MinHook.h>
 #include <atomic>
 #include <algorithm>
@@ -81,6 +82,11 @@ std::atomic<bool> music_muted{};
 std::atomic<float> music_envelope_gain{1.f};
 std::atomic<std::uint64_t> flush_generation{};
 Session session;
+GameShortcuts game_shortcuts;
+Ptr input_device_slot{};
+Ptr input_check_vtable{};
+GameInputCheckUpdate original_input_check_update{};
+bool input_check_fault_reported{};
 std::mutex taint_mutex;
 std::unordered_set<Ptr> tainted_worlds;
 std::unordered_set<Ptr> consumed_worlds; // game-thread only; cleared on world destruction
@@ -408,13 +414,32 @@ void __fastcall world_update_hook(Ptr world) {
         }
     }
 }
+void __fastcall input_check_update_hook(Ptr checker) {
+    const auto world=updating_world;
+    // +312 is the world's shared force-crash checker, in the stable world
+    // prefix. Match the exact object so other scenes keep their native input.
+    const bool owned=input_device_slot && world && world==current_world &&
+        field<Ptr>(world,312)==checker && session.native_exit_locked();
+    if(!update_game_input_check(original_input_check_update,checker,input_check_vtable,owned)) {
+        if(!input_check_fault_reported) {
+            input_check_fault_reported=true;
+            log("Native shortcut conflict guard failed; holding playback paused");
+        }
+        const auto state=session.snapshot(); session.submit({state.generation,Action::Pause});
+    }
+}
 char __fastcall play_state_hook(Ptr world) {
     // The timer already ran this frame. Intercept here before native play state
     // checks all-failed, adds clear time or queues its failure/auto-retry scenes.
     if(world==current_world) suppress_native_finish(image,world,session.native_exit_locked());
     if(world==current_world && !field<std::uint8_t>(world,native::world_layout().forced_end) && supported(world)) {
         GameBackend backend(world);
-        if(session.intercept_gauge_failure(position(field<Ptr>(world,216)),backend)) return 0;
+        const bool was_gauge_returning=session.snapshot().gauge_returning;
+        if(session.intercept_gauge_failure(position(field<Ptr>(world,216)),backend)) {
+            if(!was_gauge_returning)
+                log("Gauge failure interception at "+std::to_string(position(field<Ptr>(world,216)))+" seconds");
+            return 0;
+        }
         if(session.intercept_track_end(position(field<Ptr>(world,216)),backend)) return 0;
         if(session.native_exit_locked() && !session.snapshot().ready) return 0;
     }
@@ -599,6 +624,14 @@ void __fastcall timer_update_hook(Ptr timer) {
     original_timer_update(timer);
     GameBackend backend(world);
     const float cursor=state.reversing && reverse_player.owns_bus()?static_cast<float>(reverse_player.position()):position(timer);
+    GameInput input;
+    if(read_game_input(input_device_slot,input)) {
+        const auto event=game_shortcuts.poll(session,input,GetTickCount64());
+        if(event==GameShortcutEvent::TogglePlayback)
+            log("Game shortcut: toggle playback at "+std::to_string(cursor)+" seconds");
+        else if(event==GameShortcutEvent::ReturnToStart)
+            log("Game shortcut: held combination, animated return to start at "+std::to_string(cursor)+" seconds");
+    } else game_shortcuts.reset();
     session.tick(cursor,field<std::uint8_t>(timer,16)==0,backend,static_cast<float>(elapsed));
     const auto after=session.snapshot();
     suppress_song_visuals=after.playing && after.enabled && after.hide_song_visuals;
@@ -751,6 +784,9 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
     log("Native Gauge switching and ARS stacks located");
     autoplay_ready=discovered && discovered.layout.note_gate && discovered.layout.update==image+a.world_update &&
         discovered.layout.world_vtable==image+a.world_vtable && discovered.layout.timer_vtable==image+a.game_timer_vtable;
+    input_device_slot=discovered && discovered.layout.update==image+a.world_update?discovered.layout.input_device_slot:0;
+    input_check_vtable=input_device_slot?discovered.layout.input_check_vtable:0;
+    if(!input_device_slot) log("Game shortcuts unavailable: native input ABI not verified");
     if (autoplay_ready) {
         autoplay::configure(discovered.layout);
         log("Native AutoPlay located; AutoJudge RVA="+std::to_string(discovered.layout.judge-image));
@@ -800,6 +836,9 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         {a.hisp_event,reinterpret_cast<void*>(hisp_event_hook),reinterpret_cast<void**>(&original_hisp_event)},
         {native::addresses().world_update,reinterpret_cast<void*>(world_update_hook),reinterpret_cast<void**>(&original_world_update)}
     };
+    if(input_device_slot)
+        hooks.push_back({discovered.layout.input_check_update-image,reinterpret_cast<void*>(input_check_update_hook),
+            reinterpret_cast<void**>(&original_input_check_update)});
     if(autoplay_ready && discovered.layout.draw)
         hooks.push_back({discovered.layout.draw-image,reinterpret_cast<void*>(world_draw_hook),reinterpret_cast<void**>(&original_world_draw)});
     else log("Gameplay draw context unavailable; cursor camera-follow control may be incomplete");
@@ -833,6 +872,11 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         auto* address=reinterpret_cast<void*>(image+h.rva);
         const auto status=MH_CreateHook(address,h.detour,h.original);
         if (status!=MH_OK) {
+            if(discovered.layout.input_check_update && h.rva==discovered.layout.input_check_update-image) {
+                input_device_slot=input_check_vtable=0;
+                log(std::string("Game shortcuts disabled: native force-crash interception unavailable: ")+MH_StatusToString(status));
+                continue;
+            }
             if(discovered.layout.song_visuals &&
                (h.rva==discovered.layout.song_visuals.ex_draw-image || h.rva==discovered.layout.song_visuals.post_render-image)) {
                 song_visuals_ready=false;
@@ -881,6 +925,7 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         for (auto* p:created) { MH_DisableHook(p); MH_RemoveHook(p); }
         reason=std::string("Hook activation failed: ")+MH_StatusToString(status); return false;
     }
+    if(input_device_slot) log("Game shortcuts ready; native START + FX-L + FX-R force-crash request intercepted");
     reason="Game hooks ready; configured hotkey opens overlay";
     log(reason);
     return true;

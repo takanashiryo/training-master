@@ -769,6 +769,44 @@ void draw_about() {
     if (ImGui::Button(i18n::label("Close"))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
 }
+void draw_shortcuts() {
+    const auto display=ImGui::GetIO().DisplaySize;
+    const float width=std::min(720.f,display.x-56.f);
+    ImGui::SetNextWindowPos({display.x*.5f,display.y*.5f},ImGuiCond_Appearing,{.5f,.5f});
+    ImGui::SetNextWindowSize({width,0},ImGuiCond_Appearing);
+    ImGui::SetNextWindowSizeConstraints({width,0},{width,std::max(200.f,display.y-64.f)});
+    ImGui::SetNextWindowBgAlpha(preferences().snapshot().background_opacity);
+    bool open=true;
+    if(!ImGui::BeginPopupModal(i18n::label("Shortcut Keys"),&open,
+                             ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoResize)) return;
+    const auto row=[](const char* key,const char* action) {
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn(); ImGui::TextWrapped("%s",key);
+        ImGui::TableNextColumn(); ImGui::TextWrapped("%s",i18n::text(action));
+    };
+    section("Overlay hotkey");
+    if(ImGui::BeginTable("##overlay-shortcuts",2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchSame)) {
+        row(hotkey_name(preferences().snapshot().hotkey).c_str(),"Show / hide overlay");
+        ImGui::EndTable();
+    }
+    section("Game controls");
+    if(ImGui::BeginTable("##game-shortcuts",2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchSame)) {
+        ImGui::TableSetupColumn("##game-key",ImGuiTableColumnFlags_WidthFixed,210.f);
+        ImGui::TableSetupColumn("##game-action",ImGuiTableColumnFlags_WidthStretch);
+        row("START + FX-L + FX-R","Tap: pause / play; hold: animate back to 0:00 and pause");
+        row("VOL-L","Turn while paused: adjust the timeline");
+        ImGui::EndTable();
+    }
+    section("Chart View");
+    if(ImGui::BeginTable("##chart-shortcuts",2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchSame)) {
+        row(i18n::text("Double-click left mouse button"),"Mark loop IN at the clicked position");
+        row(i18n::text("Double-click right mouse button"),"Mark loop OUT at the clicked position");
+        ImGui::EndTable();
+    }
+    ImGui::Spacing();
+    if(ImGui::Button(i18n::label("Close"))) ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
 void draw_transport(Session& session,const State& s) {
     auto send=[&](Action action,float value=0.f){session.submit({s.generation,action,value});};
     section("Transport");
@@ -919,14 +957,17 @@ void draw_panel(Session& session) {
     const bool expanded=ImGui::Begin(i18n::label("Training Master"),&open,ImGuiWindowFlags_MenuBar);
     if (!open) { visible=false; capturing_hotkey=false; }
     if (!expanded) { ImGui::End(); draw_options(session); return; }
-    bool show_about=false,focus_options=false;
+    bool show_about=false,show_shortcuts=false,focus_options=false;
     if (ImGui::BeginMenuBar()) {
         if(ImGui::MenuItem(i18n::label("Option"))) { options_open=true; focus_options=true; }
+        show_shortcuts=ImGui::MenuItem(i18n::label("Shortcut"));
         show_about=ImGui::MenuItem(i18n::label("About"));
         ImGui::EndMenuBar();
     }
     if (show_about) ImGui::OpenPopup(i18n::label("About Training Master"));
+    if (show_shortcuts) ImGui::OpenPopup(i18n::label("Shortcut Keys"));
     draw_about();
+    draw_shortcuts();
     bool failed;
     { std::lock_guard lock(status_mutex); failed=status_failed; }
     if (failed || !s.playing) {

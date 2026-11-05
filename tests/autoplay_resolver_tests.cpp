@@ -77,6 +77,24 @@ struct Fixture {
     ~Fixture() { VirtualFree(data,0,MEM_RELEASE); }
     Fixture(const Fixture&)=delete;
     training::autoplay_discovery::Result resolve() { return training::autoplay_discovery::resolve(reinterpret_cast<HMODULE>(data)); }
+    void input() {
+        const auto checker=update+0xc00,encoder=update+0xe00;
+        bytes(checker,{0x53,0x48,0x83,0xec,0x40});
+        unsigned i=0;
+        for(unsigned char offset:{0x68,0x7c,0x80}) {
+            const auto at=checker+32+32*i++;
+            bytes(at,{0x48,0x8b,0x0d,0,0,0,0,0x83,0xb9,offset,0x81,0,0,0});
+            put<std::int32_t>(at+3,static_cast<std::int32_t>(0xe800-at-7));
+        }
+        bytes(checker+128,{0xc6,0x43,0x10,1,0xf3,0x0f,0x58,0x73,0x14,0xf3,0x0f,0x11,0x73,0x14,
+            0xc6,0x43,0x10,0,0xc7,0x43,0x14,0,0,0,0});
+        bytes(encoder,{0x53,0x48,0x83,0xec,0x40});
+        bytes(encoder+32,{0x48,0x8b,0x15,0,0,0,0,0x8b,0x4d,0,0x48,0x83,0xf9,2,0x0f,0x83,0,0,0,0,
+            0x0f,0xb7,0x84,0xca,0x5c,0x81,0,0,0x66,0x2b,0x84,0xca,0x58,0x81,0,0,0x0f,0xbf,0xf8});
+        put<std::int32_t>(encoder+35,static_cast<std::int32_t>(0xe800-encoder-39));
+        functions.push_back({checker,checker+160,0}); functions.push_back({encoder,encoder+128,0}); sync_functions();
+        rtti(".?AVGameInputCheckRequestForceTrackCrash@Game@@",{clock,checker});
+    }
 };
 bool exact(const Fixture& f, const training::autoplay_discovery::Result& r) {
     return r && r.layout.update==reinterpret_cast<std::uintptr_t>(f.data+f.update) &&
@@ -86,7 +104,7 @@ bool exact(const Fixture& f, const training::autoplay_discovery::Result& r) {
 }
 }
 
-int main() {
+int main(int argc,char** argv) {
     unsigned failed=0, total=0;
     auto check=[&](const char* label, bool good) { ++total; if(!good) ++failed; std::printf("%s %s\n",good?"PASS":"FAIL",label); };
     { Fixture f; check("primary RTTI and nonstandard method order",exact(f,f.resolve())); }
@@ -111,6 +129,30 @@ int main() {
     { Fixture f; f.put<std::uint32_t>(0x80+24+56,0xFFFF); // PE SizeOfImage ends before final section.
       check("truncated image rejected",!f.resolve()); }
     check("null module rejected",!training::autoplay_discovery::resolve(nullptr));
+    for(bool moved:{false,true}) {
+        Fixture f(moved); f.input(); const auto r=f.resolve();
+        check("game input slot resolved from relocated native button and encoder reads",r &&
+              r.layout.input_device_slot==reinterpret_cast<std::uintptr_t>(f.data+0xe800) &&
+              r.layout.input_check_update==reinterpret_cast<std::uintptr_t>(f.data+f.update+0xc00) && r.layout.input_check_vtable);
+    }
+    { Fixture f; f.input(); f.data[f.update+0xc00+41]=0x69;
+      const auto r=f.resolve(); check("changed button ABI disables only shortcuts",r && !r.layout.input_device_slot); }
+    { Fixture f; f.input(); f.put<std::int32_t>(f.update+0xc00+67,0);
+      const auto r=f.resolve(); check("inconsistent native IO slots disable shortcuts",r && !r.layout.input_device_slot); }
+    { Fixture f; f.input(); f.data[f.update+0xe00+56]=0x60;
+      const auto r=f.resolve(); check("changed encoder ABI disables shortcuts",r && !r.layout.input_device_slot); }
+    { Fixture f; f.input(); f.data[f.update+0xc00]=0xe9;
+      const auto r=f.resolve(); check("detoured button checker rejected",r && !r.layout.input_device_slot); }
+    { Fixture f; f.input(); f.data[f.update+0xc00+130]=0x18;
+      const auto r=f.resolve(); check("changed force-crash request ABI disables shortcuts",r && !r.layout.input_device_slot && !r.layout.input_check_update); }
+    { Fixture f; f.input(); f.put<std::int32_t>(f.update+0xe00+35,0);
+      const auto r=f.resolve(); check("encoder must use the same IO singleton as buttons",r && !r.layout.input_device_slot); }
+    if(argc==2) {
+        const auto module=LoadLibraryExA(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
+        const auto r=training::autoplay_discovery::resolve(module);
+        check("reference game input ABI verified without running game code",r && r.layout.input_device_slot);
+        if(module) FreeLibrary(module);
+    }
     { Fixture f; f.data[f.judge+0x200+19]=0;
       const auto r=f.resolve(); check("modified note gate disables selective dispatch",r && !r.layout.note_gate); }
     { Fixture f; const auto copy=f.judge+0x400;

@@ -43,11 +43,12 @@ struct State {
     bool finish_requested{};
     AutoplayMode autoplay_mode{AutoplayMode::All};
     bool hide_song_visuals{};
+    bool scrubbing{};
 };
 struct LoopRange { float start{},end{}; };
 LoopRange loop_range(const State& state);
 float loop_gain(const State& state);
-enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode, SetHideSongVisuals };
+enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode, SetHideSongVisuals, TogglePlayback, ReturnToStart, ScrubBy };
 struct Command { std::uint64_t generation; Action action; float value{}, end{}; };
 class Backend {
 public:
@@ -67,7 +68,7 @@ public:
     virtual bool gauge_failed(bool& failed) { failed=false; return true; }
     virtual bool track_complete(bool& complete) { complete=false; return true; }
     virtual void release_gauge() {}
-    // Seek only the visible chart during a silent entry/loop return animation.
+    // Move the visible chart without decoding/seeking song audio each frame.
     virtual bool seek_chart(float seconds) { return seek(seconds); }
 };
 // Only the game thread calls begin/tick/end; UI threads exchange copies and commands.
@@ -95,13 +96,16 @@ public:
 private:
     bool apply(const Command&, Backend&);
     bool enable(Backend&);
-    bool start_rewind(float target, bool loop_return, Backend&);
+    bool start_rewind(float target, bool loop_return, Backend&,bool reset_native_gauge=false);
     bool release_rewind_mute(Backend&);
     bool pause_at_end(Backend&);
+    bool commit_scrub(Backend&);
+    bool update_scrub(float elapsed_seconds,Backend&);
     mutable std::mutex mutex_;
     State state_;
     std::deque<Command> commands_;
     float rewind_from_{},rewind_elapsed_{},rewind_duration_{},rewind_target_{};
-    bool rewind_muted_{},loop_return_{};
+    bool rewind_muted_{},loop_return_{},rewind_reset_gauge_{};
+    float scrub_target_{},scrub_idle_{},scrub_direction_{};
 };
 }

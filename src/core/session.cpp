@@ -39,10 +39,12 @@ void Session::begin(Track track, bool ready, bool previously_tainted) {
     state_.out = state_.track.duration;
     state_.message = state_.ready ? "Training is off" : "Track is not supported";
     commands_.clear();
-    rewind_from_=rewind_elapsed_=rewind_duration_=rewind_target_=0.f; rewind_muted_=loop_return_=false;
+    rewind_from_=rewind_elapsed_=rewind_duration_=rewind_target_=0.f; rewind_muted_=loop_return_=rewind_reset_gauge_=false;
+    scrub_target_=scrub_idle_=scrub_direction_=0.f;
 }
 void Session::end(Backend& backend) {
     std::lock_guard lock(mutex_);
+    if(state_.scrubbing) commit_scrub(backend);
     backend.music_gain(1.f);
     backend.release_gauge(); state_.gauge.enabled=false;
     backend.release_lane_speed(); state_.lane_speed_locked=false;
@@ -51,7 +53,7 @@ void Session::end(Backend& backend) {
         backend.rate(1.f); if (state_.paused || state_.reversing) backend.pause(false);
     }
     if (rewind_muted_) backend.mute(false);
-    rewind_muted_=false; state_.rewinding=state_.gauge_returning=state_.at_end=false;
+    rewind_muted_=rewind_reset_gauge_=false; state_.rewinding=state_.gauge_returning=state_.at_end=state_.scrubbing=false;
     state_.playing = state_.enabled = state_.paused = state_.autoplay = false;
     state_.hide_song_visuals=false;
     state_.rate = 1.f;
@@ -73,9 +75,9 @@ void Session::submit(Command command) {
 State Session::snapshot() const { std::lock_guard lock(mutex_); return state_; }
 bool Session::navigation_active() const {
     std::lock_guard lock(mutex_);
-    return state_.rewinding || (state_.reversing && !state_.paused) ||
+    return state_.rewinding || state_.scrubbing || (state_.reversing && !state_.paused) ||
         std::any_of(commands_.begin(),commands_.end(),[&](const auto& c) {
-            return c.generation==state_.generation && c.action==Action::Seek;
+            return c.generation==state_.generation && (c.action==Action::Seek || c.action==Action::ReturnToStart || c.action==Action::ScrubBy);
         });
 }
 bool Session::suppress_result() const { std::lock_guard lock(mutex_); return state_.tainted; }
@@ -128,8 +130,9 @@ bool Session::intercept_gauge_failure(float position,Backend& b) {
     s.message="Gauge return failed; paused. Results remain blocked.";
     return true;
 }
-bool Session::start_rewind(float target,bool loop_return,Backend& b) {
+bool Session::start_rewind(float target,bool loop_return,Backend& b,bool reset_native_gauge) {
     auto& s=state_;
+    s.scrubbing=false;
     if (!b.mute(true)) return false;
     rewind_muted_=true;
     if (s.reversing && !b.reverse(false)) return false;
@@ -137,6 +140,7 @@ bool Session::start_rewind(float target,bool loop_return,Backend& b) {
     s.paused=true; s.rewinding=true; s.at_end=false;
     rewind_from_=std::clamp(s.position,0.f,s.track.duration); rewind_elapsed_=0.f;
     rewind_target_=target; loop_return_=loop_return;
+    rewind_reset_gauge_=reset_native_gauge;
     rewind_duration_=std::clamp(std::fabs(rewind_from_-target)/120.f,.35f,1.25f);
     return true;
 }
@@ -149,6 +153,31 @@ bool Session::pause_at_end(Backend& b) {
     // suppress a just-earned UC/PUC/S-PUC announcement in the player updater.
     state_.at_end=true; state_.position=state_.track.duration; state_.paused=true;
     return b.pause(true);
+}
+bool Session::commit_scrub(Backend& b) {
+    if(!state_.scrubbing) return true;
+    // Reuse ordinary seek's gauge and boundary handling. Commit the visible
+    // position so Play or another transport action never resumes stale audio.
+    return apply({state_.generation,Action::Seek,state_.position},b);
+}
+bool Session::update_scrub(float elapsed_seconds,Backend& b) {
+    if(!state_.scrubbing) return true;
+    if(!state_.paused) return commit_scrub(b);
+    const float dt=std::isfinite(elapsed_seconds)?std::clamp(elapsed_seconds,0.f,.05f):0.f;
+    scrub_idle_+=dt;
+    // 25 ms response time: smooth individual encoder pulses without a long
+    // inertial tail. Use elapsed time so 60/120/240 Hz have the same response.
+    const float distance=scrub_target_-state_.position;
+    const float blend=-std::expm1(-dt/.025f);
+    const bool settled=std::fabs(distance)<.00001f || scrub_idle_>=.15f;
+    const float target=settled?scrub_target_:state_.position+distance*blend;
+    if(target!=state_.position) {
+        if(!b.seek_chart(target)) return false;
+        state_.position=target;
+    }
+    // Keep the music decoder idle through the gesture; align it once after
+    // the knob stops. A new mouse seek supersedes this pending alignment.
+    return scrub_idle_<.15f || commit_scrub(b);
 }
 bool Session::intercept_track_end(float position,Backend& b) {
     std::lock_guard lock(mutex_);
@@ -246,6 +275,19 @@ bool Session::apply(const Command& c, Backend& b) {
         return true;
     }
     if (!s.enabled && !(c.action==Action::Finish && s.tainted)) return true;
+    if(c.action==Action::TogglePlayback)
+        return apply({c.generation,s.paused?Action::Resume:Action::Pause},b);
+    if(s.scrubbing) {
+        switch(c.action) {
+        case Action::Resume: case Action::Reverse: case Action::Disable: case Action::Pause:
+            if(!commit_scrub(b)) return false;
+            break;
+        case Action::Seek: case Action::Restart: case Action::ReturnToStart: case Action::Finish:
+            s.scrubbing=false;
+            break;
+        default: break;
+        }
+    }
     switch (c.action) {
     case Action::Disable:
         if (s.gauge.enabled) { auto config=s.gauge; config.enabled=false; if(!b.gauge(config)) return false; s.gauge.enabled=false; }
@@ -287,6 +329,17 @@ bool Session::apply(const Command& c, Backend& b) {
             (s.loop && std::fabs(s.position-loop_range(s).start)<=.001f)) && !b.reset_gauge()) return false;
         s.rewinding=s.gauge_returning=s.at_end=false;
         break;
+    case Action::ScrubBy: {
+        if(!s.ready || !s.paused || s.rewinding || s.gauge_returning || c.value==0.f) break;
+        // Relative motion accumulates against the pending target, rather than
+        // repeatedly discarding fractions against an older UI snapshot.
+        // Reversing the knob cancels the unseen tail for immediate feedback.
+        const float base=!s.scrubbing || c.value*scrub_direction_<0.f?s.position:scrub_target_;
+        scrub_target_=static_cast<float>(std::clamp(static_cast<double>(base)+c.value,0.,static_cast<double>(s.track.duration)));
+        if(!s.scrubbing && scrub_target_==s.position) break;
+        s.scrubbing=true; s.at_end=false; scrub_idle_=0.f; scrub_direction_=c.value;
+        break;
+    }
     case Action::SetIn:
         if (c.value < 0.f || c.value > s.out - .05f) { s.message = "IN must be at least 50 ms before OUT"; break; }
         s.in = c.value; break;
@@ -317,6 +370,12 @@ bool Session::apply(const Command& c, Backend& b) {
         s.position=s.loop?loop_range(s).start:s.in;
         if (!b.seek(s.position) || ((s.gauge.enabled || s.gauge_returning) && !b.reset_gauge())) return false;
         s.rewinding=s.gauge_returning=s.at_end=false; break;
+    case Action::ReturnToStart:
+        if(!start_rewind(0.f,false,b,s.track.gauge_ready || s.gauge_returning)) return false;
+        // A shortcut return ends in forward-ready pause, regardless of the
+        // previous direction or the loop's repeat setting.
+        s.reversing=s.gauge_returning=false;
+        break;
     case Action::Finish:
         b.release_gauge(); s.gauge.enabled=false;
         b.release_lane_speed(); s.lane_speed_locked=false;
@@ -335,10 +394,10 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
     if (!state_.playing) return;
     if (!std::isfinite(position)) {
         if (state_.reversing) { b.reverse(false); b.pause(true); state_.reversing=false; state_.paused=true; }
-        state_.rewinding=false;
+        state_.rewinding=state_.scrubbing=false;
         state_.ready = false; state_.autoplay=state_.camera_locked=false; state_.message = "Invalid game clock"; return;
     }
-    if (!state_.rewinding) state_.position = state_.at_end?state_.track.duration:position;
+    if (!state_.rewinding && !state_.scrubbing) state_.position = state_.at_end?state_.track.duration:position;
     // During reverse playback the native timer/music voices are deliberately paused.
     // Logical pause is controlled independently while decoded PCM drives chart time.
     if (state_.rewinding || !state_.reversing) state_.paused = state_.rewinding || state_.at_end || native_paused;
@@ -347,6 +406,7 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
         const auto c = commands_.front(); commands_.pop_front();
         if (!apply(c,b)) { ok = false; break; }
     }
+    if(ok) ok=update_scrub(elapsed_seconds,b);
     if (ok && !state_.rewinding && state_.enabled && !state_.paused && state_.loop) {
         const auto range=loop_range(state_);
         // Constrain entry as well as exit: starting/seeking before the lead-in
@@ -364,11 +424,11 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
     if (ok && state_.rewinding) {
         if (std::isfinite(elapsed_seconds)) rewind_elapsed_+=std::clamp(elapsed_seconds,0.f,.05f);
         const float remaining=std::max(0.f,1.f-rewind_elapsed_/rewind_duration_);
-        // Entry and loop share the same cubic ease-out, ending at the exact target.
+        // Entry, shortcut returns and loops share the same cubic ease-out.
         const float target=rewind_target_+(rewind_from_-rewind_target_)*remaining*remaining*remaining;
         if (std::fabs(rewind_from_-rewind_target_)<=.001f || remaining==0.f) {
             ok=b.seek(rewind_target_) && b.pause(true);
-            if (ok && (state_.gauge.enabled || state_.gauge_returning)) ok=b.reset_gauge();
+            if (ok && (state_.gauge.enabled || state_.gauge_returning || rewind_reset_gauge_)) ok=b.reset_gauge();
             const bool resume=loop_return_ && state_.loop && state_.repeat;
             if (ok && resume) {
                 if (state_.reversing) ok=b.reverse(true);
@@ -398,7 +458,7 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
         if (state_.reversing) b.reverse(false);
         b.pause(true); b.rate(1.f);
         state_.reversing=false;
-        state_.rewinding=false;
+        state_.rewinding=state_.scrubbing=false;
         state_.ready = false; state_.paused = true;
         state_.autoplay=state_.camera_locked=false;
         state_.message = "Transport failed; paused. Results remain blocked. Use Finish Immediately.";
