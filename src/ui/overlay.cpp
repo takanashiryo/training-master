@@ -770,8 +770,19 @@ void draw_about() {
     ImGui::EndPopup();
 }
 void draw_shortcuts() {
+    const auto hotkey=hotkey_name(preferences().snapshot().hotkey);
+    const char* keys[]{hotkey.c_str(),"START + FX-L + FX-R","VOL-L",
+        i18n::text("Double-click left mouse button"),i18n::text("Double-click right mouse button")};
+    const char* actions[]{"Show / hide overlay","Tap: pause / play; hold: animate back to 0:00 and pause",
+        "Turn while paused: adjust the timeline","Mark loop IN at the clicked position","Mark loop OUT at the clicked position"};
+    float key_width=0,action_width=0;
+    for(const auto* key:keys) key_width=std::max(key_width,ImGui::CalcTextSize(key).x);
+    for(const auto* action:actions) action_width=std::max(action_width,ImGui::CalcTextSize(i18n::text(action)).x);
     const auto display=ImGui::GetIO().DisplaySize;
-    const float width=std::min(720.f,display.x-56.f);
+    constexpr float cell_padding=6.f,column_gap=8.f;
+    const float width=std::min(std::max(360.f,key_width+column_gap+action_width+4*cell_padding+
+        2*ImGui::GetStyle().WindowPadding.x),display.x-56.f);
+    key_width=std::min(key_width+column_gap,(width-2*ImGui::GetStyle().WindowPadding.x)*.45f);
     ImGui::SetNextWindowPos({display.x*.5f,display.y*.5f},ImGuiCond_Appearing,{.5f,.5f});
     ImGui::SetNextWindowSize({width,0},ImGuiCond_Appearing);
     ImGui::SetNextWindowSizeConstraints({width,0},{width,std::max(200.f,display.y-64.f)});
@@ -779,30 +790,38 @@ void draw_shortcuts() {
     bool open=true;
     if(!ImGui::BeginPopupModal(i18n::label("Shortcut Keys"),&open,
                              ImGuiWindowFlags_AlwaysAutoResize|ImGuiWindowFlags_NoResize)) return;
+    ImGui::PushStyleVar(ImGuiStyleVar_CellPadding,{cell_padding,3.f});
+    const auto table=[&](const char* id) {
+        if(!ImGui::BeginTable(id,2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingFixedFit)) return false;
+        // Share the measured key column across every section so descriptions
+        // all begin at the same x position, with a small consistent gap.
+        ImGui::TableSetupColumn("##key",ImGuiTableColumnFlags_WidthFixed,key_width);
+        ImGui::TableSetupColumn("##action",ImGuiTableColumnFlags_WidthStretch);
+        return true;
+    };
     const auto row=[](const char* key,const char* action) {
         ImGui::TableNextRow();
         ImGui::TableNextColumn(); ImGui::TextWrapped("%s",key);
         ImGui::TableNextColumn(); ImGui::TextWrapped("%s",i18n::text(action));
     };
     section("Overlay hotkey");
-    if(ImGui::BeginTable("##overlay-shortcuts",2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchSame)) {
-        row(hotkey_name(preferences().snapshot().hotkey).c_str(),"Show / hide overlay");
+    if(table("##overlay-shortcuts")) {
+        row(keys[0],actions[0]);
         ImGui::EndTable();
     }
     section("Game controls");
-    if(ImGui::BeginTable("##game-shortcuts",2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchSame)) {
-        ImGui::TableSetupColumn("##game-key",ImGuiTableColumnFlags_WidthFixed,210.f);
-        ImGui::TableSetupColumn("##game-action",ImGuiTableColumnFlags_WidthStretch);
-        row("START + FX-L + FX-R","Tap: pause / play; hold: animate back to 0:00 and pause");
-        row("VOL-L","Turn while paused: adjust the timeline");
+    if(table("##game-shortcuts")) {
+        row(keys[1],actions[1]);
+        row(keys[2],actions[2]);
         ImGui::EndTable();
     }
     section("Chart View");
-    if(ImGui::BeginTable("##chart-shortcuts",2,ImGuiTableFlags_BordersInnerH|ImGuiTableFlags_SizingStretchSame)) {
-        row(i18n::text("Double-click left mouse button"),"Mark loop IN at the clicked position");
-        row(i18n::text("Double-click right mouse button"),"Mark loop OUT at the clicked position");
+    if(table("##chart-shortcuts")) {
+        row(keys[3],actions[3]);
+        row(keys[4],actions[4]);
         ImGui::EndTable();
     }
+    ImGui::PopStyleVar();
     ImGui::Spacing();
     if(ImGui::Button(i18n::label("Close"))) ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
