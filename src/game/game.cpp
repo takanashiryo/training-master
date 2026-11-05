@@ -302,8 +302,25 @@ void stop_for_native_finish(Ptr world) {
         log("Premium Time native quick finish: training transport stopped; result guard retained");
     }
 }
+void publish_training_access(TrainingAccess access,Ptr world) {
+    // Do not let a second preview/demo world displace an active player world.
+    // A disallowed global game mode, however, always revokes training access.
+    if(access==TrainingAccess::UnsupportedMode || !current_world || current_world==world) {
+        if(access!=TrainingAccess::Allowed && current_world) {
+            song_visual_control.restore();
+            camera_control.before_update(current_world); camera_control.reset();
+        }
+        GameBackend backend(current_world?current_world:world);
+        session.set_access(access,backend);
+        if(access!=TrainingAccess::Allowed && current_world) {
+            current_world=0; requested_rate=1.f; game_shortcuts.reset();
+        }
+    }
+}
 void __fastcall world_update_hook(Ptr world) {
-    const bool active=field<Ptr>(world,24)==image+native::addresses().play_state;
+    const auto access=training_world_access(image,world);
+    publish_training_access(access,world);
+    const bool active=access==TrainingAccess::Allowed && field<Ptr>(world,24)==image+native::addresses().play_state;
     if(current_world==world || (active && current_world!=world)) song_visual_control.restore();
     if (active && current_world!=world) {
         if (current_world) {
@@ -651,6 +668,12 @@ void __fastcall destroy_hook(Ptr world) {
     consumed_worlds.erase(world);
 }
 bool __fastcall request_next_hook(Ptr scene,Ptr argument) {
+    // Refresh selection/scene warnings before a GameWorld exists. Active
+    // worlds publish from their update instead, avoiding reentrant session
+    // changes if native transport callbacks request another scene.
+    if(!updating_world && !current_world)
+        publish_training_access(training_mode_allowed(field<int>(image,native::addresses().game_mode))?
+            TrainingAccess::Allowed:TrainingAccess::UnsupportedMode,0);
     const auto table=field<Ptr>(scene,0);
     if (table==image+native::addresses().music_select_vtable) {
         music_select_route=capture_music_select_route(scene);

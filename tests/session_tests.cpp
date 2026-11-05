@@ -39,6 +39,26 @@ void tick(Session& s,Game& g,float pos) {
 void begin(Session& s,bool ready=true) { s.set_loop_buffers(0,0); s.begin({"test.vox",12,3,120.f},ready); }
 int main() {
     try {
+        for(auto access:{TrainingAccess::UnsupportedMode,TrainingAccess::Demo}) {
+            Session restricted; Game probe;
+            Track t{"restricted.vox",1,3,120};
+            t.autoplay_ready=t.camera_ready=t.lane_speed_ready=t.gauge_ready=true;
+            restricted.set_access(access,probe);
+            restricted.begin(t,true);
+            for(auto action:{Action::Enable,Action::SetAutoplay,Action::SetCameraLocked,Action::SetLaneSpeedLocked,Action::SetGaugeEnabled})
+                restricted.submit({restricted.snapshot().generation,action,1});
+            restricted.tick(30,false,probe,.016f);
+            check(!restricted.snapshot().playing && !restricted.snapshot().enabled && !restricted.suppress_result() &&
+                  restricted.snapshot().generation==0 && probe.seeks==0,"blocked modes and demos must not bind or implicitly enable a training session");
+            restricted.set_access(TrainingAccess::Allowed,probe); restricted.begin(t,true);
+            command(restricted,Action::Enable); tick(restricted,probe,30);
+            check(restricted.snapshot().enabled,"returning to an allowed mode must permit a fresh session");
+            restricted.set_access(access,probe);
+            check(!restricted.snapshot().playing && !restricted.snapshot().enabled && !restricted.snapshot().ready &&
+                  !probe.paused && !probe.muted && probe.speed==1,"entering a blocked context must release existing training transport");
+        }
+        for(int mode=-1;mode<=12;++mode)
+            check(training_mode_allowed(mode)==(mode==0 || mode==6),"only native Normal and Premium Time mode IDs are allowed");
         Session s; Game g; begin(s);
         check(!s.snapshot().enabled && !s.suppress_result(),"must default off");
         command(s,Action::Seek,50); tick(s,g,0); check(g.seeks==0,"off ignores transport");

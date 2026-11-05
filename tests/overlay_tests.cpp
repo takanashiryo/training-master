@@ -102,6 +102,13 @@ int main() {
         training::set_overlay_status("Game hooks ready");
         const auto ready=render(session);
         only_message(ready,"Choose a track to start training.");
+        TransportBackend restricted_backend;
+        session.set_access(training::TrainingAccess::UnsupportedMode,restricted_backend);
+        only_message(render(session),"Training can only be enabled in Normal or Premium Time.");
+        check(has_color(IM_COL32(255,255,0,255)),"unsupported mode warning must be yellow");
+        session.set_access(training::TrainingAccess::Demo,restricted_backend);
+        only_message(render(session),"Choose a track to start training.");
+        session.set_access(training::TrainingAccess::Allowed,restricted_backend);
         training::Track track{"test.vox",12,3,120.f}; track.autoplay_ready=track.camera_ready=true;
         track.lane_speed_ready=true; track.gauge_ready=true;
         auto info=std::make_shared<training::SongInfo>();
@@ -336,6 +343,12 @@ int main() {
         training::set_overlay_status("Game hooks ready");
         training::Session idle;
         check(render(idle).find("请选择一首曲目以开始训练。")!=std::string::npos,"idle status must be localized");
+        idle.set_access(training::TrainingAccess::UnsupportedMode,restricted_backend);
+        const auto restricted_chinese=render(idle);
+        check(restricted_chinese.find("只能在Normal或Premium Time下可开启训练")!=std::string::npos &&
+              restricted_chinese.find("播放控制")==std::string::npos && restricted_chinese.find("曲目 ID")==std::string::npos &&
+              restricted_chinese.find("立即结束")==std::string::npos && has_color(IM_COL32(255,255,0,255)),
+              "blocked modes must show the exact yellow Chinese warning without training content");
         auto english=training::preferences().snapshot(); english.language=training::i18n::Language::English;
         check(training::preferences().save(english,config_error),"language must switch back to English");
         const auto restored=render(session);

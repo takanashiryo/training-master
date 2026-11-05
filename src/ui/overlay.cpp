@@ -970,6 +970,11 @@ void draw_panel(Session& session) {
     draw_shortcuts();
     bool failed;
     { std::lock_guard lock(status_mutex); failed=status_failed; }
+    if(s.access==TrainingAccess::UnsupportedMode) {
+        clear_cover();
+        ImGui::TextColored({1,1,0,1},"%s",i18n::text("Training can only be enabled in Normal or Premium Time."));
+        ImGui::End(); draw_options(session,focus_options); return;
+    }
     if (failed || !s.playing) {
         clear_cover();
         ImGui::TextColored(failed?ImVec4{1,.2f,.2f,1}:ImVec4{1,1,0,1},"%s",

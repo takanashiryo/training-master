@@ -4,6 +4,7 @@
 #include "core/gauge_types.hpp"
 #include "core/song_info.hpp"
 #include "core/reverse_audio.hpp"
+#include "core/training_access.hpp"
 #include <cstdint>
 #include <deque>
 #include <mutex>
@@ -44,6 +45,7 @@ struct State {
     AutoplayMode autoplay_mode{AutoplayMode::All};
     bool hide_song_visuals{};
     bool scrubbing{};
+    TrainingAccess access{TrainingAccess::Allowed};
 };
 struct LoopRange { float start{},end{}; };
 LoopRange loop_range(const State& state);
@@ -76,6 +78,9 @@ class Session {
 public:
     void begin(Track track, bool ready, bool previously_tainted=false);
     void end(Backend& backend);
+    // The game thread publishes eligibility before binding any track data.
+    // Changing to a blocked context releases an existing practice session.
+    void set_access(TrainingAccess access,Backend& backend);
     void submit(Command command);
     void tick(float position, bool native_paused, Backend& backend,float elapsed_seconds=0.f);
     State snapshot() const;
@@ -94,6 +99,7 @@ public:
     // Keep native player/HUD updates running while holding natural end routing.
     bool intercept_track_end(float position,Backend& backend);
 private:
+    void end_locked(Backend&);
     bool apply(const Command&, Backend&);
     bool enable(Backend&);
     bool start_rewind(float target, bool loop_return, Backend&,bool reset_native_gauge=false);

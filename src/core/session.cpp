@@ -25,6 +25,7 @@ void Session::set_loop_buffers(float before,float after) {
 }
 void Session::begin(Track track, bool ready, bool previously_tainted) {
     std::lock_guard lock(mutex_);
+    if(state_.access!=TrainingAccess::Allowed) return;
     const auto generation = state_.generation + 1;
     const auto blocked = state_.blocked_results;
     const auto before=state_.loop_before,after=state_.loop_after;
@@ -44,6 +45,17 @@ void Session::begin(Track track, bool ready, bool previously_tainted) {
 }
 void Session::end(Backend& backend) {
     std::lock_guard lock(mutex_);
+    end_locked(backend);
+}
+void Session::set_access(TrainingAccess access,Backend& backend) {
+    std::lock_guard lock(mutex_);
+    if(state_.access==access) return;
+    if(access!=TrainingAccess::Allowed && state_.playing) end_locked(backend);
+    state_.access=access;
+    if(access!=TrainingAccess::Allowed) state_.ready=false;
+    commands_.clear();
+}
+void Session::end_locked(Backend& backend) {
     if(state_.scrubbing) commit_scrub(backend);
     backend.music_gain(1.f);
     backend.release_gauge(); state_.gauge.enabled=false;
@@ -202,6 +214,7 @@ bool Session::intercept_track_end(float position,Backend& b) {
 }
 bool Session::apply(const Command& c, Backend& b) {
     auto& s = state_;
+    if(s.access!=TrainingAccess::Allowed) return true;
     if (c.generation != s.generation || !s.playing || !std::isfinite(c.value)) return true;
     if(s.finish_requested) return true;
     if (c.action==Action::SetGaugeEnabled || c.action==Action::SetGaugeType || c.action==Action::SetGaugeInitial) {

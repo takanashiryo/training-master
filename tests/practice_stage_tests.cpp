@@ -165,17 +165,31 @@ int wmain(int argc,wchar_t** argv) {
         at<Ptr>(setting_global,0)=old_setting;
         at<std::uint8_t>(world_address,training::native::world_layout().demo+12)=at<std::uint8_t>(world_address,training::native::world_layout().demo+13)=at<std::uint8_t>(world_address,training::native::world_layout().no_fail)=1;
         check(training::supports_training_world(image,world_address),"Premium Time world flags must allow training");
-        at<int>(image,training::native::addresses().game_mode)=3;
+        at<int>(image,training::native::addresses().game_mode)=0;
         check(!training::supports_training_world(image,world_address),"Normal must still reject unsupported no-fail worlds");
         at<std::uint8_t>(world_address,training::native::world_layout().no_fail)=0;
         check(training::supports_training_world(image,world_address),"Normal support must remain available");
+        for(int mode=-1;mode<=12;++mode) {
+            at<int>(image,training::native::addresses().game_mode)=mode;
+            at<std::uint8_t>(world_address,training::native::world_layout().no_fail)=mode==6;
+            const bool allowed=mode==0 || mode==6;
+            check(training::supports_training_world(image,world_address)==allowed,"native mode matrix permits only Normal and Premium Time");
+            check((training::training_world_access(image,world_address)==training::TrainingAccess::Allowed)==allowed,
+                  "native mode warning eligibility must match the backend gate");
+        }
         at<int>(image,training::native::addresses().game_mode)=6;
         at<std::uint8_t>(world_address,training::native::world_layout().no_fail)=1;
         for (const auto offset:{training::native::world_layout().demo,training::native::world_layout().special,training::native::world_layout().battle}) {
             at<std::uint8_t>(world_address,offset)=1;
             check(!training::supports_training_world(image,world_address),"Premium Time must still reject demo/tutorial/matching worlds");
+            if(offset==training::native::world_layout().demo)
+                check(training::training_world_access(image,world_address)==training::TrainingAccess::Demo,"DEMO ATTRACTION worlds must be rejected before track binding");
             at<std::uint8_t>(world_address,offset)=0;
         }
+        at<Ptr>(world_address,0)+=8;
+        check(training::training_world_access(image,world_address)==training::TrainingAccess::Demo &&
+              !training::supports_training_world(image,world_address),"title-demo world subclasses must not bind as a player world");
+        at<Ptr>(world_address,0)-=8;
         alignas(8) std::array<std::byte,640> matching{};
         at<int>(reinterpret_cast<Ptr>(matching.data()),632)=1;
         const auto previous_matching=at<Ptr>(image,rva(0x1261bd0));
