@@ -18,7 +18,7 @@ PracticeStageRecord::PracticeStageRecord(unsigned ordinal,unsigned music,unsigne
                                        std::span<const std::byte,236> options) {
     const auto p=address();
     const auto& layout=native::result_layout();
-    std::memcpy(bytes_.data()+4,options.data(),options.size());
+    std::memcpy(bytes_.data()+4,options.data(),layout.options_size);
     at<unsigned>(p,0)=5; // no scored result
     at<unsigned>(p,layout.field(244))=difficulty;
     at<unsigned>(p,layout.field(1700))=ordinal;
@@ -39,7 +39,7 @@ PracticeStageRecord::PracticeStageRecord(unsigned ordinal,unsigned music,unsigne
     at<std::uintptr_t>(p,layout.field(840))=at<std::uintptr_t>(p,layout.field(848))=reinterpret_cast<std::uintptr_t>(buckets_.data()+buckets_.size());
     at<unsigned>(p,layout.field(864))=7;
     at<unsigned>(p,layout.field(868))=8;
-    for (unsigned i=0;i<3;++i) at<unsigned>(p,layout.field(872)+276*i)=5;
+    for (unsigned i=0;i<3;++i) at<unsigned>(p,layout.field(872+276*i))=5;
 }
 bool remember_practice_selection(std::uintptr_t image,std::uintptr_t world) {
     __try {
@@ -105,7 +105,7 @@ bool can_continue_practice_safe(std::uintptr_t image,std::uintptr_t data,NativeC
 unsigned decide_practice_flow(std::uintptr_t image,std::uintptr_t flow,int state,std::uintptr_t argument,
                              NativeContinue continuation,NativeFlow original) {
     if (state==43 && argument==18) {
-        const auto data=reinterpret_cast<std::uintptr_t(__fastcall*)()>(image+native::addresses().stage_data)();
+        const auto data=native::stage_result(image);
         const auto last=last_record(data);
         if (last && is_practice_stage(last) &&
             !can_continue_practice_safe(image,data,continuation))

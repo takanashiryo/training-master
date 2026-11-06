@@ -75,6 +75,15 @@ const Addresses& addresses() { return active.addresses; }
 const Resolution& resolution() { return active; }
 const WorldLayout& world_layout() { return active.world; }
 const ResultLayout& result_layout() { return active.result; }
+std::uintptr_t stage_result(std::uintptr_t image) {
+    __try {
+        const auto& a=addresses();
+        if(!image || !a.stage_result_vtable) return 0;
+        const auto object=a.stage_data_slot?*reinterpret_cast<const std::uintptr_t*>(image+a.stage_data_slot):
+            a.stage_data?reinterpret_cast<std::uintptr_t(__fastcall*)()>(image+a.stage_data)():0;
+        return object && *reinterpret_cast<const std::uintptr_t*>(object)==image+a.stage_result_vtable?object:0;
+    } __except(EXCEPTION_EXECUTE_HANDLER) { return 0; }
+}
 bool validate(HMODULE module,std::string& reason) {
     active={};
     std::vector<std::byte> image;

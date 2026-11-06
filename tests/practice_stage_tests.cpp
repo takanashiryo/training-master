@@ -82,6 +82,13 @@ int wmain(int argc,wchar_t** argv) {
         at<Ptr>(image,rva(0x884ef8))=reinterpret_cast<Ptr>(xml);
         DWORD unused{}; VirtualProtect(reinterpret_cast<void*>(image+rva(0x884ef8)),sizeof(Ptr),old,&unused);
         Data data; active=&data;
+        data.vtable=image+training::native::addresses().stage_result_vtable;
+        if(training::native::addresses().stage_data_slot)
+            at<Ptr>(image,training::native::addresses().stage_data_slot)=reinterpret_cast<Ptr>(&data);
+        check(training::native::stage_result(image)==reinterpret_cast<Ptr>(&data),"native stage object access");
+        data.vtable=0;
+        check(!training::native::stage_result(image),"reject unexpected stage object type");
+        data.vtable=image+training::native::addresses().stage_result_vtable;
         const auto serialize=reinterpret_cast<training::NativeSerialize>(image+training::native::addresses().serialize_result);
         const auto native_continue=reinterpret_cast<training::NativeContinue>(image+training::native::addresses().can_continue);
         const auto can_continue=[&] { return training::can_continue_practice_safe(image,reinterpret_cast<Ptr>(&data),native_continue); };

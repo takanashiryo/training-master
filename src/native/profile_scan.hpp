@@ -55,6 +55,8 @@ struct Family {
     WorldLayout world{};
     ResultLayout result{};
     bool chart_gauge_gain{true};
+    // EG owns a typed result pointer; NABLA exposes an RTTI-casting getter.
+    bool direct_stage_data{};
 };
 struct Resolution {
     Addresses addresses;

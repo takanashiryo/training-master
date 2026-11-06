@@ -4,8 +4,11 @@
 #include <initializer_list>
 #include <stdexcept>
 #include <vector>
+#include <string>
+#include <string_view>
 
 namespace {
+#include "game/judgment_patterns.inc"
 struct Fixture {
     unsigned char* data = static_cast<unsigned char*>(VirtualAlloc(nullptr,0x10000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
     std::uint32_t metadata = 0xA000, update, load, judge, clock, world_table{}, referee_table{};
@@ -74,6 +77,24 @@ struct Fixture {
         functions.push_back({gate,gate+128,0}); sync_functions();
         referee_table=rtti(".?AVNoteReferee@Game@@",{judge,gate});
         rtti(".?AVGameContext@Game@@",{clock}); rtti(".?AVGameTimer@Game@@",{clock});
+    }
+    void legacy_palette() {
+        const auto wrapper=update+0x1800,lookup=update+0x1900;
+        auto copy=[&](std::uint32_t at,std::string_view pattern) {
+            for(std::size_t i=0;i<pattern.size()/2;++i)
+                data[at+i]=pattern[2*i]=='?'?0:static_cast<unsigned char>(std::stoul(std::string(pattern.substr(2*i,2)),nullptr,16));
+        };
+        copy(wrapper,color_legacy); copy(lookup,color_lookup_legacy);
+        auto relative=[&](std::uint32_t operand,std::uint32_t target) { put<std::int32_t>(operand,static_cast<std::int32_t>(target)-static_cast<std::int32_t>(operand+4)); };
+        const auto global=reserve(8),cookie=reserve(8);
+        const auto table=rtti(".?AUCParamData@PlayerParamGameData@@",{judge});
+        for(unsigned offset:{22u,59u}) relative(wrapper+offset,global);
+        for(unsigned offset:{27u,73u}) relative(wrapper+offset,lookup);
+        for(unsigned offset:{8u,323u,362u,379u,401u,415u,431u}) relative(lookup+offset,judge);
+        relative(lookup+43,cookie); relative(lookup+300,table);
+        functions.push_back({wrapper,wrapper+static_cast<std::uint32_t>(color_legacy.size()/2),0});
+        functions.push_back({lookup,lookup+static_cast<std::uint32_t>(color_lookup_legacy.size()/2),0});
+        sync_functions();
     }
     ~Fixture() { VirtualFree(data,0,MEM_RELEASE); }
     Fixture(const Fixture&)=delete;
@@ -193,10 +214,24 @@ int main(int argc,char** argv) {
       const auto r=f.resolve(); check("changed force-crash request ABI disables shortcuts",r && !r.layout.input_device_slot && !r.layout.input_check_update); }
     { Fixture f; f.input(); f.put<std::int32_t>(f.update+0xe00+35,0);
       const auto r=f.resolve(); check("encoder must use the same IO singleton as buttons",r && !r.layout.input_device_slot); }
+    for(bool moved:{false,true}) {
+        Fixture f(moved); f.legacy_palette();
+        const auto r=f.resolve();
+        check("EG palette wrapper follows relocated native lookup",r && r.layout.judgment_color_option==reinterpret_cast<std::uintptr_t>(f.data+f.update+0x1800));
+    }
+    { Fixture f; f.legacy_palette(); f.data[f.update+0x1800+86]^=1;
+      const auto r=f.resolve(); check("changed palette field rejected",r && !r.layout.judgment_color_option); }
+    { Fixture f; f.legacy_palette(); f.put<std::int32_t>(f.update+0x1800+73,0);
+      const auto r=f.resolve(); check("inconsistent palette lookups rejected",r && !r.layout.judgment_color_option); }
+    { Fixture f; f.legacy_palette(); f.data[f.update+0x1900+90]^=1;
+      const auto r=f.resolve(); check("changed palette container ABI rejected",r && !r.layout.judgment_color_option); }
+    { Fixture f; f.legacy_palette(); f.put<std::int32_t>(f.update+0x1900+300,0);
+      const auto r=f.resolve(); check("palette parameter RTTI required",r && !r.layout.judgment_color_option); }
     if(argc==2) {
         const auto module=LoadLibraryExA(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
         const auto r=training::autoplay_discovery::resolve(module);
         check("reference game input ABI verified without running game code",r && r.layout.input_device_slot);
+        check("reference palette option ABI verified",r && r.layout.judgment_color_option);
         if(module) FreeLibrary(module);
     }
     { Fixture f; f.data[f.judge+0x200+19]=0;

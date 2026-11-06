@@ -169,7 +169,7 @@ constexpr RttiInterface interfaces[]={
     {".?AVGameWorldKFC@Game@@",0,world_methods,Symbol::world_vtable},
     {".?AVGameTimer@Game@@",0,timer_methods,Symbol::game_timer_vtable},
     {".?AVCBaseScene@@",0,scene_methods},
-    {".?AVCStageResultGameData@@",0,result_methods},
+    {".?AVCStageResultGameData@@",0,result_methods,Symbol::stage_result_vtable},
     {".?AVCPlayerSettingGameData@@",0,{},Symbol::player_settings_vtable},
     {".?AVCameraUpdater@Game@@",8,camera_methods},
     {".?AVGamePostEffectView@Game@@",8,posteffect_methods},
@@ -419,14 +419,16 @@ bool resolve_family(const Image& image,const RttiBindings& bindings,
             const auto rva=symbols[i];
             const auto symbol=static_cast<Symbol>(i);
             const bool absent=(symbol==Symbol::gauge_chart_options && !family.chart_gauge_gain) ||
-                (symbol==Symbol::timed_stage_limit && family.result.fixed_timed_limit!=0);
+                (symbol==Symbol::timed_stage_limit && family.result.fixed_timed_limit!=0) ||
+                (symbol==Symbol::stage_data && family.direct_stage_data) ||
+                (symbol==Symbol::stage_data_slot && !family.direct_stage_data);
             if(absent) {
                 if(rva) throw std::runtime_error("Unexpected interface in legacy ABI family");
                 continue;
             }
             const auto access=kinds[i]==Kind::Code?Access::Code:kinds[i]==Kind::Writable?Access::Writable:Access::ReadOnly;
             const auto slots=kinds[i]==Kind::Vtable?3u:kinds[i]==Kind::Vtable2?2u:0u;
-            const auto size=slots?slots*8u:(static_cast<Symbol>(i)==Symbol::matching || static_cast<Symbol>(i)==Symbol::player_settings)?8u:4u;
+            const auto size=slots?slots*8u:(static_cast<Symbol>(i)==Symbol::matching || static_cast<Symbol>(i)==Symbol::player_settings || symbol==Symbol::stage_data_slot)?8u:4u;
             if (!rva || !image.has(rva,size,access)) throw std::runtime_error(std::string(names[i])+": unresolved or invalid symbol");
             if (slots) {
                 if (rva%8) throw std::runtime_error(std::string(names[i])+": unaligned vtable");

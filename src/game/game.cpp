@@ -696,7 +696,8 @@ bool __fastcall collect_hook(Ptr world) {
     if (is_tainted(world)) {
         if(session.native_exit_locked()) { session.result_blocked(); return false; }
         if (!consumed_worlds.contains(world)) {
-            const auto data=fn<Ptr(__fastcall*)()>(native::addresses().stage_data)();
+            const auto data=native::stage_result(image);
+            if (!data) { log("Practice result object unavailable; score collection remains blocked"); return false; }
             alignas(16) std::array<std::byte,236> options{};
             fn<Ptr(__fastcall*)(Ptr,Ptr)>(native::addresses().track_options)(reinterpret_cast<Ptr>(options.data()),world+native::world_layout().music);
             PracticeStageRecord record(static_cast<unsigned>(field<int>(data,32)),field<unsigned>(world,native::world_layout().music),

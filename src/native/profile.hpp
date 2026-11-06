@@ -8,5 +8,7 @@ const Addresses& addresses();
 const Resolution& resolution();
 const WorldLayout& world_layout();
 const ResultLayout& result_layout();
+// Returns a verified CStageResultGameData object for either native access ABI.
+std::uintptr_t stage_result(std::uintptr_t image);
 bool validate(HMODULE module, std::string& reason);
 }

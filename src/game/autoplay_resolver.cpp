@@ -493,6 +493,30 @@ Result resolve_impl(HMODULE module) {
            !image.in_region(static_cast<std::uint32_t>(lookup),1,true)) continue;
         ++color_matches; layout.judgment_color_option=reinterpret_cast<std::uintptr_t>(image.base+f.begin);
     }
+    // EG's equivalent wrapper uses a typed player-parameter global directly.
+    // Verify both complete bodies, the shared lookup/global, and CParamData RTTI.
+    for(const auto f:image.functions) {
+        if(f.end-f.begin!=color_legacy.size()/2 || !matches_guard(f.begin,color_legacy)) continue;
+        const auto global=rel(f.begin,22),lookup=rel(f.begin,27);
+        if(global!=rel(f.begin,59) || lookup!=rel(f.begin,73) || global<0 || lookup<0 ||
+           global>=image.size || lookup>=image.size ||
+           !image.in_region(static_cast<std::uint32_t>(global),sizeof(std::uintptr_t),false)) continue;
+        const auto target=static_cast<std::uint32_t>(lookup);
+        const auto func=image.function(target);
+        if(func.end-func.begin!=color_lookup_legacy.size()/2 ||
+           !matches_guard(target,color_lookup_legacy)) continue;
+        const auto table=image.vtable(".?AUCParamData@PlayerParamGameData@@");
+        if(!table || rel(target,300)!=table) continue;
+        bool valid=true;
+        for(const unsigned offset:{8u,323u,362u,379u,401u,415u,431u}) {
+            const auto call=rel(target,offset);
+            if(call<0 || call>=image.size || !image.in_region(static_cast<std::uint32_t>(call),1,true)) valid=false;
+        }
+        const auto cookie=rel(target,43);
+        if(!valid || cookie<0 || cookie>=image.size ||
+           !image.in_region(static_cast<std::uint32_t>(cookie),sizeof(std::uintptr_t),false)) continue;
+        ++color_matches; layout.judgment_color_option=reinterpret_cast<std::uintptr_t>(image.base+f.begin);
+    }
     if(color_matches!=1) layout.judgment_color_option=0;
     // The gameplay initializer combines the user option and forced gauge/mode
     // conditions, then stores the effective S-CRITICAL flag in GameWorld.

@@ -5,7 +5,7 @@
 训练大师是一款 SDVX 训练模组，提供多种练习功能
 
 > [!NOTE]  
-> 当前仅支持NABLA
+> 支持 EXCEED GEAR FINAL（2025120900），NABLA 及以上
 
 ## 下载
 

@@ -63,9 +63,11 @@ struct Fixture {
         };
         for (std::size_t i=0;i<count;++i) if (!symbols[i]) {
             if((i==static_cast<std::size_t>(Symbol::gauge_chart_options) && !family.chart_gauge_gain) ||
-               (i==static_cast<std::size_t>(Symbol::timed_stage_limit) && family.result.fixed_timed_limit)) continue;
+               (i==static_cast<std::size_t>(Symbol::timed_stage_limit) && family.result.fixed_timed_limit) ||
+               (i==static_cast<std::size_t>(Symbol::stage_data) && family.direct_stage_data) ||
+               (i==static_cast<std::size_t>(Symbol::stage_data_slot) && !family.direct_stage_data)) continue;
             auto& cursor=writable[i]?rw:ro;
-            symbols[i]=cursor; cursor+=64;
+            symbols[i]=cursor; cursor+=256;
         }
         auto bind=[&](unsigned id,std::size_t target) {
             const auto [it,added]=identities.emplace(id,target);
@@ -86,7 +88,7 @@ struct Fixture {
         for (auto symbol:{Symbol::world_vtable,Symbol::draw_timer_vtable,Symbol::game_timer_vtable,
                           Symbol::fumen_data_vtable,Symbol::music_select_vtable,Symbol::alternative_scene_vtable,
                           Symbol::renderer_vtable,Symbol::camera_engine_vtable,Symbol::camera_world_vtable,Symbol::camera_space_vtable,
-                          Symbol::game_context_vtable,Symbol::fumen_player_vtable,Symbol::lane_range_vtable,Symbol::lane_button_vtable,Symbol::gauge_ref_vtable,Symbol::player_settings_vtable}) {
+                          Symbol::game_context_vtable,Symbol::fumen_player_vtable,Symbol::lane_range_vtable,Symbol::lane_button_vtable,Symbol::gauge_ref_vtable,Symbol::player_settings_vtable,Symbol::stage_result_vtable}) {
             const auto rva=symbols[static_cast<std::size_t>(symbol)];
             for (unsigned j=0;j<3;++j) put(image,rva+j*8,base+functions[j]);
         }
@@ -108,7 +110,7 @@ struct Fixture {
         rtti(".?AVGameWorldKFC@Game@@",0,{{Symbol::world_update,3},{Symbol::collect_result,7}},Symbol::world_vtable);
         rtti(".?AVGameTimer@Game@@",0,{{Symbol::timer_update,7}},Symbol::game_timer_vtable);
         rtti(".?AVCBaseScene@@",0,{{Symbol::request_next,11}});
-        rtti(".?AVCStageResultGameData@@",0,{{Symbol::serialize_result,14}});
+        rtti(".?AVCStageResultGameData@@",0,{{Symbol::serialize_result,14}},Symbol::stage_result_vtable);
         rtti(".?AVCPlayerSettingGameData@@",0,{},Symbol::player_settings_vtable);
         rtti(".?AVCameraUpdater@Game@@",8,{{Symbol::camera_update,1}});
         rtti(".?AVGamePostEffectView@Game@@",8,{{Symbol::posteffect_event,1}});
@@ -172,23 +174,25 @@ int main() {
                 check(!resolve_image(relocated.image,relocated.base,other,rejected,reason),"foreign layout accepted");
             }
             const auto selector_index=relocated.anchor("track_options");
-            const auto selector=family.anchors[selector_index].selectors.front();
-            const auto selector_start=relocated.functions[selector_index];
-            put<std::uint32_t>(relocated.image,selector_start+selector.maximum,250);
-            put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,251);
-            put<std::uint32_t>(relocated.image,selector_start+selector.fallback,177);
-            const auto changed=relocated.resolve();
-            check(std::any_of(changed.details.begin(),changed.details.end(),[](const auto& x) { return x.find("Compatible content selector")!=std::string::npos; }),"content change must be diagnosed");
             Resolution complete; std::string complete_reason;
             check(resolve_image(relocated.image,relocated.base,complete,complete_reason) && complete.world==family.world,"runtime and family entry points must agree");
-            put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,252); relocated.rejects("track_options");
-            put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,251);
-            put<std::uint32_t>(relocated.image,selector_start+selector.fallback,251); relocated.rejects("track_options");
-            put<std::uint32_t>(relocated.image,selector_start+selector.fallback,177);
-            put<std::uint32_t>(relocated.image,selector_start+selector.maximum,256);
-            put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,257); relocated.rejects("track_options");
-            put<std::uint32_t>(relocated.image,selector_start+selector.maximum,250);
-            put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,251);
+            if(!family.anchors[selector_index].selectors.empty()) {
+                const auto selector=family.anchors[selector_index].selectors.front();
+                const auto selector_start=relocated.functions[selector_index];
+                put<std::uint32_t>(relocated.image,selector_start+selector.maximum,250);
+                put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,251);
+                put<std::uint32_t>(relocated.image,selector_start+selector.fallback,177);
+                const auto changed=relocated.resolve();
+                check(std::any_of(changed.details.begin(),changed.details.end(),[](const auto& x) { return x.find("Compatible content selector")!=std::string::npos; }),"content change must be diagnosed");
+                put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,252); relocated.rejects("track_options");
+                put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,251);
+                put<std::uint32_t>(relocated.image,selector_start+selector.fallback,251); relocated.rejects("track_options");
+                put<std::uint32_t>(relocated.image,selector_start+selector.fallback,177);
+                put<std::uint32_t>(relocated.image,selector_start+selector.maximum,256);
+                put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,257); relocated.rejects("track_options");
+                put<std::uint32_t>(relocated.image,selector_start+selector.maximum,250);
+                put<std::uint32_t>(relocated.image,selector_start+selector.exclusive,251);
+            }
             const auto index=relocated.anchor("play_state");
             const auto patch=family.anchors[index].patches.front();
             const auto site=relocated.functions[index]+patch.offset;
@@ -201,7 +205,7 @@ int main() {
 #define TM_SYMBOL(name, kind) \
         check(a.addresses.name==first.symbols[static_cast<std::size_t>(Symbol::name)],"first relocation: " #name); \
         check(b.addresses.name==shifted.symbols[static_cast<std::size_t>(Symbol::name)],"second relocation: " #name); \
-        check(a.addresses.name!=b.addresses.name,"symbol must move: " #name);
+        check((Symbol::name==Symbol::stage_data_slot && !a.addresses.name && !b.addresses.name) || a.addresses.name!=b.addresses.name,"symbol must move: " #name);
 #include "native/profile_symbols.inc"
 #undef TM_SYMBOL
         first.image[0x5fff0]=std::byte{0x55}; first.resolve(); // Unrelated patch has no version/hash gate.

@@ -30,6 +30,9 @@ namespace abi0203 {
 namespace abi0217 {
 #include "native/profiles/profile_0217.inc"
 }
+namespace abi1209 {
+#include "native/profiles/profile_1209.inc"
+}
 static const Family catalog[]={
     {"sdvx-eg-abi1",abi1013::anchors,world_1013},
     {"sdvx-eg-abi0901",abi0901::anchors,world_0901},
@@ -41,4 +44,5 @@ static const Family catalog[]={
     {"sdvx-nabla-0324",abi0324::anchors,world_1226,result_early,false},
     {"sdvx-nabla-0714",abi0714::anchors,world_1226,{},false},
     {"sdvx-nabla-0825",abi0825::anchors,world_0901},
+    {"sdvx-eg-1209",abi1209::anchors,world_1209,result_1209,false,true},
 };

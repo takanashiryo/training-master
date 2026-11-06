@@ -5,7 +5,7 @@
 Training Master is a training mod for SDVX. Give you lot of training features
 
 > [!NOTE]  
-> Only support NABLA now
+> Supports EXCEED GEAR FINAL (2025120900), NABLA and above.
 
 ## Download
 
