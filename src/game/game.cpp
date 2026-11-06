@@ -792,7 +792,7 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
     if(!song_animation_ready) log("Song animation reset unavailable: event ABI not verified");
     camera_control.configure({image+a.world_vtable,image+a.renderer_vtable,image+a.camera_engine_vtable,
         image+a.camera_world_vtable,image+a.camera_space_vtable,
-        fn<camera::Rebuild>(a.camera_rebuild_space),fn<camera::SetView>(a.camera_set_view),native::world_layout()});
+        fn<camera::Rebuild>(a.camera_rebuild_space),fn<camera::SetView>(a.camera_set_view),native::world_layout(),native::resolution().camera});
     log("Camera pose control located; native animations continue behind the locked view");
     lane_control.configure({image+a.world_vtable,image+a.game_context_vtable,image+a.fumen_player_vtable,
         image+a.draw_timer_vtable,image+a.fumen_data_vtable,image+a.lane_range_vtable,

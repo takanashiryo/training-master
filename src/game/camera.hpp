@@ -24,6 +24,7 @@ struct Layout {
     Rebuild rebuild{};
     SetView set_view{};
     native::WorldLayout world{};
+    native::CameraDefaults defaults{};
 };
 using NemsysTransform=Ptr(__fastcall*)(Ptr,Ptr);
 class NemsysController {
@@ -76,9 +77,9 @@ private:
     std::array<FirstSource,8> first_sources_{};
     std::array<SecondSource,8> second_sources_{};
 };
-// Called only on the game thread. Capture the default pose before the first
-// native update of a track. Lock displays that pose while native animation
-// keeps advancing; restore it before the next native update.
+// Called only on the game thread. Lock displays the verified constructor
+// baseline while native animation keeps advancing; restore the live pose
+// before the next native update.
 class Controller {
 public:
     void configure(Layout layout);
@@ -103,8 +104,8 @@ private:
     bool read(const Binding&,Pose&) const;
     bool write(const Binding&,const Pose&) const;
     Layout layout_{};
-    Binding binding_{},default_binding_{};
-    Pose frozen_{},native_{},cursor_saved_{},default_pose_{};
-    bool active_{},borrowed_{},faulted_{},cursor_borrowed_{},default_ready_{};
+    Binding binding_{};
+    Pose frozen_{},native_{},cursor_saved_{};
+    bool active_{},borrowed_{},faulted_{},cursor_borrowed_{};
 };
 }

@@ -266,6 +266,54 @@ std::vector<std::size_t> locate(const Image& image,const Anchor& anchor,const Pa
     return found;
 }
 std::span<const Family> internal_families() { return catalog; }
+CameraDefaults camera_defaults(const Image& image,const Family& family,
+                              const std::vector<std::vector<std::size_t>>& candidates) {
+    auto index=[&](std::string_view name) {
+        for(std::size_t i=0;i<family.anchors.size();++i) if(family.anchors[i].name==name) return i;
+        throw std::runtime_error("Camera defaults: verified constructor missing");
+    };
+    CameraDefaults result;
+    const auto world=index("camera_world_constructor"),at=candidates[world].front();
+    // Constructor MOVSS -> UCOMISS pairs identify each component by its
+    // destination member. Read their already-validated RIP-relative targets;
+    // do not assume global addresses, adjacency, or reference-table indices.
+    for(unsigned group=0;group<2;++group) for(unsigned axis=0;axis<3;++axis) {
+        unsigned found=0;
+        for(const auto& ref:family.anchors[world].references) {
+            if(ref.access!=Access::Writable || ref.kind!=ReferenceKind::Relative32 || ref.operand<4) continue;
+            const auto load=read<std::uint32_t>(image.bytes,at+ref.operand-4);
+            const auto compare=read<std::uint16_t>(image.bytes,at+ref.next);
+            const auto modrm=read<unsigned char>(image.bytes,at+ref.next+2);
+            if((load!=0x0d100ff3 && load!=0x05100ff3) || compare!=0x2e0f ||
+                modrm!=(load==0x0d100ff3?0x89:0x81) ||
+                read<std::uint32_t>(image.bytes,at+ref.next+3)!=(group?240u:216u)+axis*4) continue;
+            const auto target=static_cast<std::int64_t>(at+ref.next)+read<std::int32_t>(image.bytes,at+ref.operand);
+            if(target<0 || !image.has(static_cast<std::size_t>(target),sizeof(float),Access::Writable))
+                throw std::runtime_error("Camera defaults: vector outside native data");
+            (group?result.rotation:result.position)[axis]=read<float>(image.bytes,static_cast<std::size_t>(target));
+            ++found;
+        }
+        if(found!=1) throw std::runtime_error("Camera defaults: missing or ambiguous native vector");
+    }
+    const auto engine=index("camera_engine_constructor"),entry=candidates[engine].front();
+    const auto size=std::strlen(family.anchors[engine].pattern)/2;
+    constexpr unsigned char prefix[]{0x89,0xbe,0xa8,1,0,0,0xc7,0x86,0xac,1,0,0};
+    constexpr unsigned char second[]{0xc7,0x86,0xb0,1,0,0};
+    unsigned centers=0;
+    for(std::size_t offset=0;offset+26<=size;++offset) {
+        const auto p=image.bytes.data()+entry+offset;
+        if(std::memcmp(p,prefix,sizeof(prefix)) || std::memcmp(p+16,second,sizeof(second))) continue;
+        // The full constructor guard verifies EDI was cleared before the
+        // angle store. The two integer center coordinates are immediates.
+        result.angle=0.f;
+        result.center={read<std::int32_t>(image.bytes,entry+offset+12),read<std::int32_t>(image.bytes,entry+offset+22)};
+        ++centers;
+    }
+    if(centers!=1) throw std::runtime_error("Camera defaults: missing or ambiguous native center");
+    result.verified=true;
+    if(!result) throw std::runtime_error("Camera defaults: invalid native values");
+    return result;
+}
 bool resolve_family(const Image& image,const RttiBindings& bindings,
                     const Family& family,Resolution& result,std::string& reason) {
     result={};
@@ -352,6 +400,7 @@ bool resolve_family(const Image& image,const RttiBindings& bindings,
         for (std::size_t i=0;i<candidates.size();++i) if (candidates[i].size()!=1)
             throw std::runtime_error(std::string(family.anchors[i].name)+": ambiguous signature after reference-graph checks");
         Resolution resolved; resolved.family=family.name; resolved.world=family.world;
+        resolved.camera=camera_defaults(image,family,candidates);
         resolved.result=family.result; resolved.chart_gauge_gain=family.chart_gauge_gain; resolved.interface_methods=bindings.count;
         for (std::size_t i=0;i<patterns.size();++i) for (const auto& variant:patterns[i].variants) {
             const auto begin=image.bytes.begin()+candidates[i].front()+variant.offset;

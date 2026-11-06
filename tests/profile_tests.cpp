@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iostream>
 #include <map>
+#include <limits>
 #include <stdexcept>
 
 namespace {
@@ -146,6 +147,23 @@ int main() {
         for(const auto& family:families()) {
             Fixture relocated(5,family);
             const auto result=relocated.resolve();
+            check(result.camera && result.camera.position==std::array<float,3>{} && result.camera.rotation==std::array<float,3>{},
+                  "camera baseline must be read from relocated native data, not hardcoded reference values");
+            {
+                Fixture defaults(9,family);
+                const auto world=defaults.anchor("camera_world_constructor");
+                const auto& refs=family.anchors[world].references;
+                const auto first=std::find_if(refs.begin(),refs.end(),[](const auto& ref) { return ref.access==Access::Writable; });
+                check(first!=refs.end(),"camera defaults fixture requires native vector data");
+                const auto target=defaults.identities.at(first->identity);
+                put<float>(defaults.image,target,17.25f);
+                check(defaults.resolve().camera.position[0]==17.25f,"camera baseline must follow the constructor's own data reference");
+                put<float>(defaults.image,target,std::numeric_limits<float>::quiet_NaN());
+                defaults.rejects("Camera defaults: invalid native values");
+                put<float>(defaults.image,target,0.f);
+                defaults.patch(world,*first,defaults.image.size()-1);
+                defaults.rejects("Camera defaults: vector outside native data");
+            }
             check(result.interface_methods==12,"all audited RTTI method contracts must bind");
             check(result.world==family.world,"resolved ABI must carry its field layout");
             check(result.result==family.result && result.chart_gauge_gain==family.chart_gauge_gain,"resolved record/interface ABI differs");

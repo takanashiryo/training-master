@@ -119,21 +119,45 @@ bool compute(const Fixture& f) {
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+void canonical_pose_regression(Layout layout) {
+    // A song is allowed to start with a non-default angle/translation.
+    // Locking must use the engine's own baseline, not this first frame.
+    for(unsigned song:{0u,40u}) {
+        Fixture f(layout); f.animate(song);
+        Controller control; control.configure(layout);
+        check(control.before_update(f.w) && compute(f) && control.after_update(f.w,true),"canonical camera lock setup failed");
+        check(at<float>(f.e,424)==layout.defaults.angle && at<int>(f.e,428)==layout.defaults.center[0] &&
+              at<int>(f.e,432)==layout.defaults.center[1] &&
+              std::memcmp(f.root.data()+216,layout.defaults.position.data(),12)==0 &&
+              std::memcmp(f.root.data()+240,layout.defaults.rotation.data(),12)==0,
+              "camera lock must use the native constructor baseline independently of the song's first frame");
+        check(control.before_update(f.w),"restore live pose before canonical re-lock");
+        check(at<float>(f.e,424)==12.f+song*.25f && at<int>(f.e,432)==-512,
+              "canonical lock must preserve the song's live camera center and angle for release");
+    }
+    Fixture f(layout);
+    auto invalid=layout; invalid.defaults.verified=false;
+    Controller unavailable; unavailable.configure(invalid);
+    check(!unavailable.available(f.w),"unverified defaults must not borrow a camera pose");
+    invalid=layout; invalid.defaults.position[0]=std::numeric_limits<float>::quiet_NaN();
+    unavailable.configure(invalid);
+    check(!unavailable.available(f.w),"nonfinite defaults must not be written into camera objects");
+}
 void run(Layout layout) {
     Fixture f(layout); Controller control; control.configure(layout);
-    check(control.before_update(f.w),"default camera pose must be recorded before native animation");
+    check(control.before_update(f.w),"native camera update setup failed");
     check(control.available(f.w),"validated camera graph must be available, including negative integer centers");
     check(compute(f),"native camera matrix computation failed");
+    const auto unchanged_lane=f.lane;
+    check(control.after_update(f.w,true),"initial canonical camera lock failed");
     const auto frozen_root=f.root,frozen_child=f.child;
     const auto frozen_engine=f.engine;
-    const auto unchanged_lane=f.lane;
-    check(control.after_update(f.w,true),"initial camera capture failed");
     for(unsigned frame=1;frame<=240;++frame) {
         check(control.before_update(f.w),"native pose restore failed");
         check(at<float>(f.e,424)==12.f+(frame-1)*.25f,"next native update must see its latest evolving angle");
         f.animate(frame); check(compute(f),"animated matrix computation failed");
         check(control.after_update(f.w,true),"camera freeze failed");
-        check(at<float>(f.e,424)==12.f && at<int>(f.e,432)==-512,"camera angle and integer center must stay fixed");
+        check(at<float>(f.e,424)==layout.defaults.angle && at<int>(f.e,432)==layout.defaults.center[1],"camera angle and integer center must stay fixed");
         check(std::memcmp(f.root.data()+24,frozen_root.data()+24,192)==0 &&
               std::memcmp(f.child.data()+24,frozen_child.data()+24,192)==0,
               "camera local/composed/inverse matrices must stay fixed, parent before child");
@@ -146,11 +170,11 @@ void run(Layout layout) {
           "unlock must restore current native pose, including after all events have stopped");
     f.animate(250); check(compute(f),"unlocked computation failed");
     check(control.after_update(f.w,true),"re-lock failed");
-    check(at<float>(f.e,424)==12.f && at<float>(f.p,216)==3.f,
-          "enabling lock after camera motion must reset the displayed pose to the track default");
+    check(at<float>(f.e,424)==layout.defaults.angle && at<float>(f.p,216)==layout.defaults.position[0],
+          "re-lock after camera motion must reset to the native constructor baseline");
     check(control.before_update(f.w),"pre-update for seek failed");
     f.animate(10); check(compute(f),"seek camera computation failed");
-    check(control.after_update(f.w,true) && at<float>(f.e,424)==12.f,"seek must preserve the default locked displayed pose");
+    check(control.after_update(f.w,true) && at<float>(f.e,424)==layout.defaults.angle,"seek must preserve the canonical locked pose");
     check(control.before_update(f.w) && at<float>(f.e,424)==14.5f,"native pose must follow seek behind the locked view");
     control.reset(); check(control.before_update(f.w) && control.after_update(f.w,true),"next track capture failed");
     check(control.before_update(f.w),"cleanup restore failed");
@@ -577,8 +601,10 @@ void native_descendant(Layout layout) {
     using Matrix=const void*(__fastcall*)(Ptr);
     const auto matrix=reinterpret_cast<Matrix>(at<Ptr>(layout.space_vtable,40));
     std::array<unsigned char,64> baseline{},moved{};
+    matrix(note);
+    check(control.after_update(f.w,true),"projection lock failed");
     std::memcpy(baseline.data(),matrix(note),64);
-    check(control.after_update(f.w,true) && control.before_update(f.w),"projection lock failed");
+    check(control.before_update(f.w),"projection live pose restore failed");
     f.animate(60); check(compute(f),"native animated projection failed");
     matrix(note); // Cache an animated camera pose, as native note updates may do.
     check(control.after_update(f.w,true),"projection freeze failed");
@@ -595,6 +621,7 @@ int wmain(int argc,wchar_t** argv) {
     HMODULE module{};
     try {
         Layout layout{0x1000,0x2000,0x3000,0x4000,0x5000,rebuild,set_view};
+        layout.defaults={0.f,{540,960},{0.f,0.f,60.12f},{41.28f,0.f,0.f},true};
         if(argc==2) {
             module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
             check(module!=nullptr,"native module mapping failed");
@@ -603,8 +630,9 @@ int wmain(int argc,wchar_t** argv) {
             const auto& a=training::native::addresses();
             layout={base+a.world_vtable,base+a.renderer_vtable,base+a.camera_engine_vtable,
                 base+a.camera_world_vtable,base+a.camera_space_vtable,
-                reinterpret_cast<Rebuild>(base+a.camera_rebuild_space),reinterpret_cast<SetView>(base+a.camera_set_view),training::native::world_layout()};
+                reinterpret_cast<Rebuild>(base+a.camera_rebuild_space),reinterpret_cast<SetView>(base+a.camera_set_view),training::native::world_layout(),training::native::resolution().camera};
         }
+        canonical_pose_regression(layout);
         run(layout);
         slam_shake_regression(layout);
         post_event_policy();

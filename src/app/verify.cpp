@@ -25,6 +25,10 @@ int wmain(int argc,wchar_t** argv) {
         <<", forced_end="<<w.forced_end<<", gauge_types="<<w.gauge_types
         <<", no_fail="<<w.no_fail<<", battle="<<w.battle<<'\n';
     const auto& r=result_layout();
+    const auto& camera=resolution().camera;
+    std::cout<<"Native camera defaults: position="<<camera.position[0]<<','<<camera.position[1]<<','<<camera.position[2]
+        <<" rotation="<<camera.rotation[0]<<','<<camera.rotation[1]<<','<<camera.rotation[2]
+        <<" angle="<<camera.angle<<" center="<<camera.center[0]<<','<<camera.center[1]<<'\n';
     std::cout<<"Result layout: stride="<<r.stride<<", excluded="<<r.excluded
         <<", tail_shift="<<r.tail_shift<<", fixed_timed_limit="<<r.fixed_timed_limit
         <<", chart_gauge_gain="<<resolution().chart_gauge_gain<<'\n';

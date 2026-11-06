@@ -206,11 +206,11 @@ bool VisualController::end(VisualLease& lease) {
 }
 void Controller::configure(Layout layout) { layout_=layout; reset(); }
 void Controller::reset() {
-    binding_=default_binding_={}; frozen_=native_=cursor_saved_=default_pose_={};
-    active_=borrowed_=faulted_=cursor_borrowed_=default_ready_=false;
+    binding_={}; frozen_=native_=cursor_saved_={};
+    active_=borrowed_=faulted_=cursor_borrowed_=false;
 }
 bool Controller::bind(Ptr world,Binding& result) const {
-    if (!world || !layout_.world_vtable || !layout_.rebuild || !layout_.set_view) return false;
+    if (!world || !layout_.world_vtable || !layout_.rebuild || !layout_.set_view || !layout_.defaults) return false;
     __try {
         if (field<Ptr>(world,0)!=layout_.world_vtable) return false;
         Binding b; b.world=world;
@@ -266,12 +266,6 @@ bool Controller::before_update(Ptr world) {
             if(!write(current,native_)) { active_=false; faulted_=true; return false; }
         } else active_=false;
     }
-    // WorldUpdate calls this before native timer/angle/camera updates, including
-    // while training is off. Never capture a song's animated pose at lock time.
-    if(!default_ready_ || current!=default_binding_) {
-        if(!read(current,default_pose_)) { faulted_=true; return false; }
-        default_binding_=current; default_ready_=true;
-    }
     return true;
 }
 bool Controller::after_update(Ptr world,bool locked) {
@@ -279,8 +273,15 @@ bool Controller::after_update(Ptr world,bool locked) {
     if (!locked) { active_=false; return true; }
     Binding current; Pose pose;
     if (!bind(world,current) || !read(current,pose)) { active_=false; faulted_=true; return false; }
-    if(!default_ready_ || current!=default_binding_) { active_=false; faulted_=true; return false; }
-    if (!active_ || current!=binding_) { binding_=current; frozen_=default_pose_; active_=true; }
+    if (!active_ || current!=binding_) {
+        binding_=current;
+        frozen_={};
+        frozen_.angle=layout_.defaults.angle; frozen_.center=layout_.defaults.center;
+        frozen_.position[0]=layout_.defaults.position; frozen_.rotation[0]=layout_.defaults.rotation;
+        // Pseudo3dSpace's guarded constructor initializes the child position
+        // and rotation to zero. Its X slam impulse remains live below.
+        active_=true;
+    }
     native_=pose;
     // CameraUpdater writes the native VOL slam impulse to the second camera
     // space's X position. Preserve that transient feedback while keeping the

@@ -58,6 +58,7 @@ struct Family {
 };
 struct Resolution {
     Addresses addresses;
+    CameraDefaults camera;
     WorldLayout world{};
     ResultLayout result{};
     bool chart_gauge_gain{true};

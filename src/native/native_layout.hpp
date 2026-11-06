@@ -1,7 +1,25 @@
 #pragma once
 #include <cstddef>
+#include <array>
+#include <cmath>
+#include <cstdint>
 
 namespace training::native {
+// Values read from verified native constructors and their referenced data.
+// This is independent of any song's initial camera events.
+struct CameraDefaults {
+    float angle{};
+    std::array<std::int32_t,2> center{};
+    std::array<float,3> position{},rotation{};
+    bool verified{};
+    explicit operator bool() const {
+        if(!verified || !std::isfinite(angle) || std::fabs(angle)>=1e6f) return false;
+        for(auto value:center) if(value<=-1000000 || value>=1000000) return false;
+        for(const auto& vector:{position,rotation})
+            for(float value:vector) if(!std::isfinite(value) || std::fabs(value)>=1e6f) return false;
+        return true;
+    }
+};
 // Published with the verified function graph. Offsets are never selected from
 // a filename, build date or SHA. Unchanged object prefixes stay in their owner.
 struct WorldLayout {

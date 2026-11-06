@@ -345,7 +345,7 @@ int main() {
         check(render(idle).find("请选择一首曲目以开始训练。")!=std::string::npos,"idle status must be localized");
         idle.set_access(training::TrainingAccess::UnsupportedMode,restricted_backend);
         const auto restricted_chinese=render(idle);
-        check(restricted_chinese.find("只能在Normal或Premium Time下可开启训练")!=std::string::npos &&
+        check(restricted_chinese.find("只有Normal或Premium Time下可开启训练")!=std::string::npos &&
               restricted_chinese.find("播放控制")==std::string::npos && restricted_chinese.find("曲目 ID")==std::string::npos &&
               restricted_chinese.find("立即结束")==std::string::npos && has_color(IM_COL32(255,255,0,255)),
               "blocked modes must show the exact yellow Chinese warning without training content");

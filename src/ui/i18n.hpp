@@ -76,7 +76,7 @@ inline constexpr Translation catalog[]{
     TM_TEXT("Finish Immediately","立即结束"),
     TM_TEXT("Hook entry not found!","未找到 Hook 入口！"),
     TM_TEXT("Choose a track to start training.","请选择一首曲目以开始训练。"),
-    TM_TEXT("Training can only be enabled in Normal or Premium Time.","只能在Normal或Premium Time下可开启训练"),
+    TM_TEXT("Training can only be enabled in Normal or Premium Time.","只有Normal或Premium Time下可开启训练"),
     TM_TEXT("Loop off (click: repeat selection)","循环已关闭（点击：持续循环）"),
     TM_TEXT("Repeat selection (click: loop once)","持续循环选区（点击：循环一次）"),
     TM_TEXT("Loop once, then pause (click: off)","循环一次后暂停（点击：关闭）"),
