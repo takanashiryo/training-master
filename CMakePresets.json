@@ -1,12 +1,16 @@
 {
   "version": 3,
   "configurePresets": [
-    { "name": "windows-x64", "generator": "Visual Studio 18 2026", "architecture": "x64", "binaryDir": "${sourceDir}/build", "cacheVariables": { "CMAKE_POLICY_VERSION_MINIMUM": "3.5" } },
-    { "name": "linux-cross-windows-x64", "generator": "Ninja", "binaryDir": "${sourceDir}/build-linux-cross", "toolchainFile": "${sourceDir}/cmake/toolchains/llvm-mingw-x64.cmake", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_POLICY_VERSION_MINIMUM": "3.5" } }
+    { "name": "windows-x64", "architecture": "x64", "binaryDir": "${sourceDir}/build", "cacheVariables": { "CMAKE_POLICY_VERSION_MINIMUM": "3.5" } },
+    { "name": "llvm-mingw-windows-x64", "generator": "Ninja", "binaryDir": "${sourceDir}/build-llvm-mingw", "toolchainFile": "${sourceDir}/cmake/toolchains/llvm-mingw-x64.cmake", "cacheVariables": { "CMAKE_BUILD_TYPE": "Release", "CMAKE_POLICY_VERSION_MINIMUM": "3.5" } },
+    { "name": "linux-cross-windows-x64", "inherits": "llvm-mingw-windows-x64", "binaryDir": "${sourceDir}/build-linux-cross" },
+    { "name": "macos-cross-windows-x64", "inherits": "llvm-mingw-windows-x64", "binaryDir": "${sourceDir}/build-macos-cross" }
   ],
   "buildPresets": [
     { "name": "release", "configurePreset": "windows-x64", "configuration": "Release" },
-    { "name": "linux-cross-release", "configurePreset": "linux-cross-windows-x64" }
+    { "name": "linux-cross-release", "configurePreset": "linux-cross-windows-x64" },
+    { "name": "macos-cross-release", "configurePreset": "macos-cross-windows-x64" },
+    { "name": "llvm-mingw-release", "configurePreset": "llvm-mingw-windows-x64" }
   ],
   "testPresets": [{ "name": "release", "configurePreset": "windows-x64", "configuration": "Release", "output": { "outputOnFailure": true } }]
 }

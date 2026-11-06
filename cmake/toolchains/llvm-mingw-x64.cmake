@@ -1,10 +1,13 @@
-# Cross-compile Windows x64 binaries with the LLVM MinGW tools on PATH.
+# Build Windows x64 binaries on Windows, Linux, or macOS with LLVM MinGW.
 set(CMAKE_SYSTEM_NAME Windows)
 set(CMAKE_SYSTEM_PROCESSOR x86_64)
 
-set(CMAKE_C_COMPILER x86_64-w64-mingw32-clang)
-set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-clang++)
-set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+find_program(CMAKE_C_COMPILER NAMES x86_64-w64-mingw32-clang
+  HINTS "$ENV{LLVM_MINGW_ROOT}/bin" REQUIRED)
+find_program(CMAKE_CXX_COMPILER NAMES x86_64-w64-mingw32-clang++
+  HINTS "$ENV{LLVM_MINGW_ROOT}/bin" REQUIRED)
+find_program(CMAKE_RC_COMPILER NAMES x86_64-w64-mingw32-windres
+  HINTS "$ENV{LLVM_MINGW_ROOT}/bin" REQUIRED)
 
 # Host programs (including the build system) must not come from the target sysroot.
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)

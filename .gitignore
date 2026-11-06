@@ -3,6 +3,7 @@
 /dist/
 /scripts/
 /docs/
+/samples/
 # Local IDE settings and compiled artifacts
 .vs/
 CMakeUserPresets.json

@@ -30,6 +30,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test build wrapper
+        run: cmake -P tests/build_script_tests.cmake
+
       - name: Install LLVM MinGW
         run: |
           archive=llvm-mingw-20261020-ucrt-ubuntu-22.04-x86_64.tar.xz
