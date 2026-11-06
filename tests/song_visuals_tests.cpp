@@ -4,6 +4,7 @@
 #include <cstring>
 #include <iostream>
 #include <stdexcept>
+#include <string_view>
 using namespace training::song_visuals;
 namespace {
 template<std::size_t N> struct Bytes {
@@ -52,6 +53,7 @@ void sprite_effect_regression() {
     Layout layout{1,2,3,4,5,6,7,8,visible,set_visible};
     layout.live2d=9; layout.set_live2d_visible=set_live2d_visible;
     layout.present=present_stub;
+    layout.sprites={536,448,304};
     Controller controller; controller.configure(layout);
     Bytes<512> world;
     Bytes<736> extras;
@@ -190,6 +192,33 @@ void native_render_regression(HMODULE module) {
     composition_surface=nullptr;
     std::cout<<"120 native capture/composition frames, shader bypass and exception restoration passed\n";
 }
+void native_sprite_regression(HMODULE module) {
+    const auto discovered=training::autoplay_discovery::resolve(module);
+    check(discovered && discovered.layout.song_visuals,"native sprite layout discovery");
+    auto layout=discovered.layout.song_visuals;
+    layout.visible=visible; layout.set_visible=set_visible;
+    Bytes<512> world;
+    Bytes<0x4000> background;
+    Layer shown{layout.layer,1,true},hidden{layout.layer,2,false};
+    const auto& s=layout.sprites;
+    std::vector<unsigned char> entries(s.stride*2,0xa5);
+    const auto first=reinterpret_cast<Ptr>(&shown),second=reinterpret_cast<Ptr>(&hidden);
+    std::memcpy(entries.data()+s.layer,&first,sizeof(first));
+    std::memcpy(entries.data()+s.stride+s.layer,&second,sizeof(second));
+    const auto original=entries;
+    const auto begin=reinterpret_cast<Ptr>(entries.data());
+    background.put(0,layout.ex_bg);
+    background.put(s.array,begin); background.put(s.array+8,begin+entries.size());
+    Ptr views[]{background.ptr(),0};
+    world.put(440,reinterpret_cast<Ptr>(views)); world.put(448,reinterpret_cast<Ptr>(views)+sizeof(views));
+    Controller controller; controller.configure(layout);
+    check(controller.apply(world.ptr(),true) && !shown.shown && !hidden.shown,
+          "every native sprite entry must hide using its discovered stride and layer member");
+    check(entries==original,"hiding sprites must not modify native entry storage");
+    controller.restore();
+    check(shown.shown && !hidden.shown,"native sprite visibility must preserve both original states");
+    std::cout<<"Native sprite iteration: array="<<s.array<<", stride="<<s.stride<<", layer="<<s.layer<<" passed\n";
+}
 int retired_animation_callbacks{};
 void __fastcall retire_animation_callback(Ptr,Ptr) { ++retired_animation_callbacks; }
 void native_transport_reset_regression(HMODULE module) {
@@ -232,9 +261,9 @@ void native_live2d_regression(HMODULE module) {
     auto layout=discovered.layout.song_visuals;
     layout.visible=visible; layout.set_visible=set_visible;
     const auto image=reinterpret_cast<Ptr>(module);
-    // Frozen reference fixture only; verify RTTI before using this evidence RVA.
+    // Use the resolved interface so the fixture follows each audited version.
     // GameExBgView's +624 actors contain CLive2DCrewComponent, NOT CLayer.
-    const auto component_table=image+0x8ef440;
+    const auto component_table=layout.live2d;
     const auto col=*reinterpret_cast<const Ptr*>(component_table-8);
     const auto type=image+*reinterpret_cast<const unsigned*>(col+12);
     check(std::strcmp(reinterpret_cast<const char*>(type+16),".?AVCLive2DCrewComponent@@")==0,
@@ -271,12 +300,21 @@ void native_live2d_regression(HMODULE module) {
 }
 int wmain(int argc,wchar_t** argv) {
     try {
+        const bool transport_only=argc==3 && std::wstring_view(argv[2])==L"--transport-only";
+        if(argc>1 && argc!=2 && !transport_only) {
+            std::cerr<<"Usage: training_song_visuals_tests [soundvoltex.dll [--transport-only]]\n";
+            return 2;
+        }
         sprite_effect_regression();
         transport_reset_regression();
-        if(argc==2) {
+        if(argc>=2) {
             const auto module=LoadLibraryExW(argv[1],nullptr,DONT_RESOLVE_DLL_REFERENCES);
             check(module!=nullptr,"native module mapping failed");
-            try { native_render_regression(module); native_transport_reset_regression(module); native_live2d_regression(module); }
+            try {
+                if(!transport_only) { native_render_regression(module); native_sprite_regression(module); }
+                native_transport_reset_regression(module);
+                if(!transport_only) native_live2d_regression(module);
+            }
             catch(...) { FreeLibrary(module); throw; }
             FreeLibrary(module);
         }
@@ -284,6 +322,7 @@ int wmain(int argc,wchar_t** argv) {
         Layout layout{1,2,3,4,5,6,7,8,visible,set_visible};
         layout.live2d=9; layout.set_live2d_visible=set_live2d_visible;
         layout.present=present_stub;
+        layout.sprites={536,448,304};
         control.configure(layout);
         Bytes<512> world;
         Bytes<736> background;

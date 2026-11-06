@@ -9,6 +9,13 @@ using Visible=bool(__fastcall*)(Ptr);
 using SetVisible=void(__fastcall*)(Ptr,bool);
 using PostRender=bool(__fastcall*)(Ptr);
 using Event=Ptr(__fastcall*)(Ptr,Ptr);
+struct SpriteLayout {
+    std::uint32_t array{},stride{},layer{};
+    explicit operator bool() const {
+        return array>=8 && array<0x4000 && array%8==0 && stride>=16 && stride<=0x1000 &&
+            stride%8==0 && layer>=8 && layer%8==0 && layer<=stride-sizeof(Ptr);
+    }
+};
 struct Layout {
     Ptr ex_bg{},autopara{},post{},layer{},priority{},ex_draw{},post_render{},target{};
     Visible visible{};
@@ -18,8 +25,9 @@ struct Layout {
     PostRender present{};
     Ptr post_events{};
     Event post_event{};
+    SpriteLayout sprites;
     bool can_reset() const { return post && post_events && post_event; }
-    explicit operator bool() const { return ex_bg && autopara && post && layer && priority && ex_draw && post_render && target && visible && set_visible && live2d && set_live2d_visible && present; }
+    explicit operator bool() const { return ex_bg && autopara && post && layer && priority && ex_draw && post_render && target && visible && set_visible && live2d && set_live2d_visible && present && sprites; }
 };
 // Restore extra sprite/Live2D visibility before native updates destroy owners.
 // Base backgrounds and native capture/composition continue running.

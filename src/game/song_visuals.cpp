@@ -108,7 +108,9 @@ void Controller::collect(Ptr view) {
         // ExBg owns extra overlays (e.g. mixxion's bg_mixxion_eff fragments and
         // cutin); suppress their drawing without stopping their native updates.
         stage_="extra sprite layers";
-        array(view,536,448,[&](Ptr entry) { hide_sprite(read<Ptr>(entry,304)); });
+        array(view,layout_.sprites.array,layout_.sprites.stride,[&](Ptr entry) {
+            hide_sprite(read<Ptr>(entry,layout_.sprites.layer));
+        });
         stage_="Live2D actors";
         array(view,624,16,[&](Ptr entry) {
             const auto actor=read<Ptr>(entry);

@@ -10,6 +10,7 @@ struct Fixture {
     unsigned char* data = static_cast<unsigned char*>(VirtualAlloc(nullptr,0x10000,MEM_RESERVE|MEM_COMMIT,PAGE_READWRITE));
     std::uint32_t metadata = 0xA000, update, load, judge, clock, world_table{}, referee_table{};
     std::uint32_t ctx_offset, flags_offset, timer_offset;
+    std::uint32_t sprite_update{},sprite_layer{},sprite_step{},sprite_draw{},sprite_array{};
     std::vector<RUNTIME_FUNCTION> functions;
     template<class T> void put(std::uint32_t at, T value) { std::memcpy(data+at,&value,sizeof(value)); }
     void bytes(std::uint32_t at, std::initializer_list<unsigned char> value) { for(auto b:value) data[at++]=b; }
@@ -77,6 +78,30 @@ struct Fixture {
     ~Fixture() { VirtualFree(data,0,MEM_RELEASE); }
     Fixture(const Fixture&)=delete;
     training::autoplay_discovery::Result resolve() { return training::autoplay_discovery::resolve(reinterpret_cast<HMODULE>(data)); }
+    void sprites(bool early,bool moved_fields=false) {
+        sprite_update=update+0x1200; sprite_draw=update+0x1500;
+        sprite_layer=sprite_update+80; sprite_step=sprite_update+200;
+        sprite_array=moved_fields?0x298:536;
+        bytes(sprite_update,{0x48,0x89,0x5c,0x24,0x10});
+        bytes(sprite_update+32,{0x49,0x8b,0x84,0x24,0,0,0,0});
+        put(sprite_update+36,sprite_array+8);
+        bytes(sprite_update+48,{0x4d,0x8b,static_cast<unsigned char>(early?0xbc:0xac),0x24,0,0,0,0});
+        put(sprite_update+52,sprite_array);
+        bytes(sprite_layer,{0x49,0x8b,static_cast<unsigned char>(early?0x8f:0x8d),0,0,0,0,
+            0x48,0x85,0xc9,0x0f,0x84,0,0,0,0,0x41,0x80,static_cast<unsigned char>(early?0x7f:0x7d),0x30,0});
+        put<std::uint32_t>(sprite_layer+3,early?280:304);
+        put<std::int32_t>(sprite_layer+12,static_cast<std::int32_t>(sprite_step-sprite_layer-16));
+        bytes(sprite_step,{0x49,0x81,static_cast<unsigned char>(early?0xc7:0xc5),0,0,0,0,
+            0x4c,0x3b,static_cast<unsigned char>(early?0xf8:0xe8),0x0f,0x85,0,0,0,0});
+        put<std::uint32_t>(sprite_step+3,early?424:448);
+        put<std::int32_t>(sprite_step+12,static_cast<std::int32_t>(sprite_layer-sprite_step-16));
+        bytes(sprite_draw,{0x48,0x83,0xec,0x28,0x80,0xb9,0x30,2,0,0,0,0x74,0x48,
+            0x48,0x89,0x5c,0x24,0x30,0x48,0x8b,0x99,0x70,2,0,0,
+            0x48,0x89,0x7c,0x24,0x20,0x48,0x8b,0xb9,0x78,2,0,0});
+        functions.push_back({sprite_update,sprite_update+256,0});
+        functions.push_back({sprite_draw,sprite_draw+96,0}); sync_functions();
+        rtti(".?AVGameExBgView@Game@@",{clock,sprite_update,sprite_draw});
+    }
     void input() {
         const auto checker=update+0xc00,encoder=update+0xe00;
         bytes(checker,{0x53,0x48,0x83,0xec,0x40});
@@ -107,6 +132,27 @@ bool exact(const Fixture& f, const training::autoplay_discovery::Result& r) {
 int main(int argc,char** argv) {
     unsigned failed=0, total=0;
     auto check=[&](const char* label, bool good) { ++total; if(!good) ++failed; std::printf("%s %s\n",good?"PASS":"FAIL",label); };
+    for(bool early:{false,true}) for(bool relocated:{false,true}) {
+        Fixture f(relocated); f.sprites(early,relocated); const auto r=f.resolve();
+        check("song sprite loop resolves both register forms and relocated object fields",r &&
+              r.layout.song_visuals.ex_draw==reinterpret_cast<std::uintptr_t>(f.data+f.sprite_draw) &&
+              r.layout.song_visuals.sprites.array==f.sprite_array &&
+              r.layout.song_visuals.sprites.stride==(early?424u:448u) &&
+              r.layout.song_visuals.sprites.layer==(early?280u:304u));
+    }
+    for(unsigned mutation:{0u,1u,2u,3u,4u,5u}) {
+        Fixture f; f.sprites(false);
+        if(mutation==0) f.put<std::uint32_t>(f.sprite_step+3,8); // Layer lies outside the entry.
+        if(mutation==1) f.put<std::int32_t>(f.sprite_step+12,0); // Back-edge does not return to this layer.
+        if(mutation==2) f.put<std::uint32_t>(f.sprite_update+36,f.sprite_array+16); // Wrong vector end.
+        if(mutation==3) { // A second plausible iterator must remain ambiguous.
+            std::memcpy(f.data+f.sprite_update+64,f.data+f.sprite_update+48,8);
+        }
+        if(mutation==4) f.put<std::uint32_t>(f.sprite_layer+3,448); // Member exceeds stride.
+        if(mutation==5) f.put<std::int32_t>(f.sprite_layer+12,0); // Null skip leaves the loop.
+        const auto r=f.resolve();
+        check("invalid or ambiguous sprite loop disables only song visuals",r && !r.layout.song_visuals.ex_draw);
+    }
     { Fixture f; check("primary RTTI and nonstandard method order",exact(f,f.resolve())); }
     { Fixture f(true); auto r=f.resolve(); check("moved RVAs, relocated mapping and changed object fields",
         exact(f,r)&&r.layout.time_base==0x30&&r.layout.time_offset==0x34&&r.layout.time_enabled==0x38); }

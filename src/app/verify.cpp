@@ -44,6 +44,8 @@ int wmain(int argc,wchar_t** argv) {
             targets.push_back(automatic.layout.song_visuals.post_render-base);
             std::cout<<"Song visual control verified; post render RVA=0x"<<std::hex<<automatic.layout.song_visuals.post_render-base
                      <<" raw presenter RVA=0x"<<reinterpret_cast<std::uintptr_t>(automatic.layout.song_visuals.present)-base<<std::dec<<'\n';
+            const auto& sprites=automatic.layout.song_visuals.sprites;
+            std::cout<<"Song sprite layout: array="<<sprites.array<<", stride="<<sprites.stride<<", layer="<<sprites.layer<<'\n';
         } else {
             const auto& v=automatic.layout.song_visuals;
             std::cerr<<"Song visual control unavailable: types="<<bool(v.ex_bg)<<bool(v.autopara)<<bool(v.post)<<bool(v.layer)<<bool(v.priority)

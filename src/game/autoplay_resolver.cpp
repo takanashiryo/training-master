@@ -180,6 +180,51 @@ bool clean_entry(const Image& image, Function f,unsigned prefix_length=16) {
 }
 bool field(std::uint32_t value) { return value >= 8 && value < 0x4000 && value % 8 == 0; }
 
+bool resolve_song_sprites(const Image& image,Function update,song_visuals::SpriteLayout& out) {
+    if(!clean_entry(image,update)) return false;
+    unsigned candidates=0;
+    song_visuals::SpriteLayout resolved;
+    // Audited compiler forms use r13 or r15 for the same native iterator.
+    // Extract operands, then tie the vector bounds, null skip and back-edge
+    // to that iterator. No file identity, address or assumed entry size.
+    for(bool r15:{false,true}) {
+        const int load=r15?0xbc:0xac,member=r15?0x8f:0x8d;
+        const int advance=r15?0xc7:0xc5,compare=r15?0xf8:0xe8,flag=r15?0x7f:0x7d;
+        auto begins=matches(image,update,{0x4d,0x8b,load,0x24,-1,-1,-1,-1});
+        const auto layers=matches(image,update,{0x49,0x8b,member,-1,-1,-1,-1,
+            0x48,0x85,0xc9,0x0f,0x84,-1,-1,-1,-1,0x41,0x80,flag,0x30,0});
+        const auto steps=matches(image,update,{0x49,0x81,advance,-1,-1,-1,-1,0x4c,0x3b,compare});
+        // Multiple plausible loops must not publish an arbitrary layout.
+        if(layers.size()!=1 || steps.size()!=1) continue;
+        // Later loops can reuse the register for actors/callbacks. Only a
+        // vector load preceding this layer body can initialize its iterator.
+        std::erase_if(begins,[&](auto at) { return at>=layers[0]; });
+        if(begins.size()!=1) continue;
+        const auto begin=begins[0],layer=layers[0],step=steps[0];
+        if(begin>=layer || layer>=step) continue;
+        song_visuals::SpriteLayout value{image.read<std::uint32_t>(begin+4),
+            image.read<std::uint32_t>(step+3),image.read<std::uint32_t>(layer+3)};
+        if(!value || !field(value.array+8)) continue;
+        // The end comes from the adjacent field of the same r12-owned vector.
+        unsigned ends=0;
+        for(int reg:{0x84,0x8c}) {
+            for(const auto at:matches(image,{update.begin,begin},{0x49,0x8b,reg,0x24,-1,-1,-1,-1}))
+                if(begin-at<=32 && image.read<std::uint32_t>(at+4)==value.array+8) ++ends;
+        }
+        if(ends!=1 || static_cast<std::int64_t>(layer)+16+image.read<std::int32_t>(layer+12)!=step) continue;
+        auto branch=step+10;
+        // Some builds clear esi between cmp and jne; MOV preserves flags.
+        if(branch+5<=update.end && image.base[branch]==0xbe && image.read<std::uint32_t>(branch+1)==0)
+            branch+=5;
+        if(branch+6>update.end || image.base[branch]!=0x0f || image.base[branch+1]!=0x85 ||
+            static_cast<std::int64_t>(branch)+6+image.read<std::int32_t>(branch+2)!=layer) continue;
+        ++candidates; resolved=value;
+    }
+    if(candidates!=1) return false;
+    out=resolved;
+    return true;
+}
+
 std::uintptr_t resolve_game_input(const Image& image,Layout& layout) {
     // This native checker explicitly tests START, FX-L and FX-R. Anchor to
     // its RTTI, not an RVA, and require all three reads to share one IO slot.
@@ -365,8 +410,7 @@ Result resolve_impl(HMODULE module) {
         if(image.in_region(table,24,false)) {
             const auto update=image.function(image.rva_of(image.read<std::uintptr_t>(table+8)));
             const auto draw=image.rva_of(image.read<std::uintptr_t>(table+16));
-            if(matches(image,update,{0x4d,0x8b,0xac,0x24,0x18,2,0,0}).size()==1 &&
-               matches(image,update,{0x49,0x81,0xc5,0xc0,1,0,0}).size()==1 &&
+            if(resolve_song_sprites(image,update,visuals.sprites) &&
                matches_guard(draw,"4883ec2880b9300200000074??48895c2430488b997002000048897c2420488bb978020000"))
                 visuals.ex_draw=reinterpret_cast<std::uintptr_t>(image.base+draw);
         }
