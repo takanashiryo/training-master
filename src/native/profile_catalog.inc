@@ -3,6 +3,9 @@ static constexpr char pattern_player_finished[]="488b411080b87401000000740c80b99
 namespace abi1013 {
 #include "native/profiles/profile_1013.inc"
 }
+namespace abi1027 {
+#include "native/profiles/profile_1027.inc"
+}
 namespace abi0901 {
 #include "native/profiles/profile_0901.inc"
 }
@@ -35,6 +38,7 @@ namespace abi1209 {
 }
 static const Family catalog[]={
     {"sdvx-eg-abi1",abi1013::anchors,world_1013},
+    {"sdvx-nabla-1027",abi1027::anchors,world_1013},
     {"sdvx-eg-abi0901",abi0901::anchors,world_0901},
     {"sdvx-eg-abi0805",abi0805::anchors,world_0805},
     {"sdvx-nabla-1226",abi1226::anchors,world_1226,result_1226,false},
