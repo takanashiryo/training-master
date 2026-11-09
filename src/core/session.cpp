@@ -288,6 +288,16 @@ bool Session::apply(const Command& c, Backend& b) {
         return true;
     }
     if (!s.enabled && !(c.action==Action::Finish && s.tainted)) return true;
+    if(c.action==Action::CycleLoopPaused) {
+        if(!s.ready || !s.paused || s.rewinding) return true;
+        return apply({c.generation,Action::CycleLoop},b);
+    }
+    if(c.action==Action::MarkIn || c.action==Action::MarkOut) {
+        if(!s.ready || !s.paused || s.rewinding) return true;
+        // Resolve against the visible game-thread cursor after earlier commands,
+        // keeping the same range validation as the mouse markers.
+        return apply({c.generation,c.action==Action::MarkIn?Action::SetIn:Action::SetOut,s.position},b);
+    }
     if(c.action==Action::TogglePlayback)
         return apply({c.generation,s.paused?Action::Resume:Action::Pause},b);
     if(s.scrubbing) {

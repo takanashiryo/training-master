@@ -771,10 +771,13 @@ void draw_about() {
 }
 void draw_shortcuts() {
     const auto hotkey=hotkey_name(preferences().snapshot().hotkey);
-    const char* keys[]{hotkey.c_str(),"START + FX-L + FX-R","VOL-L",
+    const char* keys[]{hotkey.c_str(),"START + FX-L + FX-R","VOL-L","BT-A","BT-D","FX-L + BT-A",
         i18n::text("Double-click left mouse button"),i18n::text("Double-click right mouse button")};
     const char* actions[]{"Show / hide overlay","Tap: pause / play; hold: animate back to 0:00 and pause",
-        "Turn while paused: adjust the timeline","Mark loop IN at the clicked position","Mark loop OUT at the clicked position"};
+        "Turn while paused: adjust the timeline","Press while paused: mark IN at the current position",
+        "Press while paused: mark OUT at the current position",
+        "Press while paused: cycle loop off / repeat / once",
+        "Mark loop IN at the clicked position","Mark loop OUT at the clicked position"};
     float key_width=0,action_width=0;
     for(const auto* key:keys) key_width=std::max(key_width,ImGui::CalcTextSize(key).x);
     for(const auto* action:actions) action_width=std::max(action_width,ImGui::CalcTextSize(i18n::text(action)).x);
@@ -813,12 +816,15 @@ void draw_shortcuts() {
     if(table("##game-shortcuts")) {
         row(keys[1],actions[1]);
         row(keys[2],actions[2]);
+        row(keys[3],actions[3]);
+        row(keys[4],actions[4]);
+        row(keys[5],actions[5]);
         ImGui::EndTable();
     }
     section("Chart View");
     if(table("##chart-shortcuts")) {
-        row(keys[3],actions[3]);
-        row(keys[4],actions[4]);
+        row(keys[6],actions[6]);
+        row(keys[7],actions[7]);
         ImGui::EndTable();
     }
     ImGui::PopStyleVar();

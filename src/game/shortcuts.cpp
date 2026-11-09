@@ -5,9 +5,16 @@ void GameShortcuts::reset() { *this={}; }
 GameShortcutEvent GameShortcuts::poll(Session& session,const GameInput& input,std::uint64_t now_ms) {
     const auto state=session.snapshot();
     const bool active=state.playing && state.enabled && state.ready && !state.finish_requested && !state.rewinding;
+    const bool loop_chord=input.fx_left && input.bt_a;
     if(!sampled_ || state.generation!=generation_ || active!=active_) {
         reset(); sampled_=true; generation_=state.generation; last_vol_=input.vol_left; active_=active;
+        last_bt_a_=input.bt_a; last_bt_d_=input.bt_d;
+        last_loop_chord_=loop_chord;
     }
+    const bool mark_in=input.bt_a && !last_bt_a_,mark_out=input.bt_d && !last_bt_d_;
+    const bool cycle_loop=loop_chord && !last_loop_chord_;
+    last_bt_a_=input.bt_a; last_bt_d_=input.bt_d;
+    last_loop_chord_=loop_chord;
     int delta=static_cast<int>(input.vol_left)-last_vol_;
     if(delta>32767) delta-=65536;
     else if(delta<-32768) delta+=65536;
@@ -39,6 +46,11 @@ GameShortcutEvent GameShortcuts::poll(Session& session,const GameInput& input,st
     }
     if(state.paused && !chord && delta)
         session.submit({state.generation,Action::ScrubBy,delta*(seconds_per_turn/65536.f)});
+    if(state.paused && !chord) {
+        if(cycle_loop) session.submit({state.generation,Action::CycleLoopPaused});
+        if(mark_in && !input.fx_left) session.submit({state.generation,Action::MarkIn});
+        if(mark_out) session.submit({state.generation,Action::MarkOut});
+    }
     return GameShortcutEvent::None;
 }
 }

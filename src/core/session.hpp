@@ -50,7 +50,7 @@ struct State {
 struct LoopRange { float start{},end{}; };
 LoopRange loop_range(const State& state);
 float loop_gain(const State& state);
-enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode, SetHideSongVisuals, TogglePlayback, ReturnToStart, ScrubBy };
+enum class Action { Enable, Disable, Pause, Resume, Seek, SetIn, SetOut, SetLoop, SetRate, Restart, Finish, SetRegion, SetAutoplay, Reverse, SetCameraLocked, SetRepeat, SetLaneSpeedLocked, SetGaugeEnabled, SetGaugeType, SetGaugeInitial, CycleLoop, SetAutoplayMode, SetHideSongVisuals, TogglePlayback, ReturnToStart, ScrubBy, MarkIn, MarkOut, CycleLoopPaused };
 struct Command { std::uint64_t generation; Action action; float value{}, end{}; };
 class Backend {
 public:

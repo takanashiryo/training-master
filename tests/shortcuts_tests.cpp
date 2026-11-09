@@ -129,6 +129,128 @@ void native_input_conflict(const char* path) {
 int main(int argc,char** argv) {
     try {
         {
+            Fixture f; f.command(Action::SetIn,20); f.command(Action::SetOut,90); f.tick();
+            f.poll({false,true,false,0,true,false});
+            check(f.session.snapshot().loop && f.session.snapshot().repeat && f.session.snapshot().in==20 &&
+                  f.session.snapshot().out==90 && f.game.paused && f.game.position==60 && !f.game.seeks,
+                  "FX-L + BT-A must cycle off to repeat without marking IN or moving the paused cursor");
+            f.poll({false,true,false,0,true,false},1500);
+            check(f.session.snapshot().repeat,"holding the loop chord must cycle only once");
+            f.poll({false,true,false,0,false,false}); f.poll({false,true,false,0,true,false});
+            check(f.session.snapshot().loop && !f.session.snapshot().repeat && f.session.snapshot().in==20,
+                  "repressing BT-A with FX-L held must cycle repeat to once without marking IN");
+            f.poll({}); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop && !f.session.snapshot().repeat,"once must cycle back to off");
+            f.poll({false,false,false,0,true,false});
+            check(f.session.snapshot().in==20,"releasing FX-L with BT-A held must not mark IN");
+            f.poll({}); f.poll({false,false,false,0,true,false});
+            check(f.session.snapshot().in==60,"BT-A alone must still mark IN after releasing the chord");
+        }
+        {
+            Fixture f; f.command(Action::Resume); f.tick();
+            f.poll({false,true,false,0,false,false}); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop && !f.game.paused && f.session.snapshot().in==0,
+                  "playing must ignore the loop shortcut with FX-L pressed first");
+            f.poll({}); f.poll({false,false,false,0,true,false}); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"playing must ignore the loop shortcut with BT-A pressed first");
+            f.command(Action::Pause); f.tick(); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"a loop chord held from playback must not fire on pause");
+            f.poll({}); f.poll({false,true,false,0,true,false});
+            check(f.session.snapshot().loop && f.session.snapshot().repeat,"a fresh paused chord must cycle loop mode");
+            f.poll({}); f.poll({false,false,false,0,true,false}); f.poll({false,true,false,0,true,false});
+            check(f.session.snapshot().loop && !f.session.snapshot().repeat,
+                  "the paused loop chord must recognize either button press order");
+        }
+        {
+            Fixture f; f.command(Action::Resume);
+            f.shortcuts.poll(f.session,{false,true,false,0,true,false},f.now+=16); f.tick();
+            check(!f.session.snapshot().loop && !f.game.paused,
+                  "a queued resume must prevent the paused-only loop command from changing modes");
+            f.command(Action::Pause); f.command(Action::CycleLoopPaused); f.tick();
+            check(f.session.snapshot().loop && f.session.snapshot().repeat,"paused-only loop commands must work after pause");
+            f.command(Action::ReturnToStart); f.command(Action::CycleLoopPaused); f.tick();
+            check(f.session.snapshot().repeat,"animated return must reject paused-only loop commands");
+        }
+        {
+            Fixture f; f.command(Action::Disable); f.tick();
+            f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"disabled training must ignore the loop shortcut");
+            f.command(Action::Enable); f.tick(); f.finish_return(); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"enabling training must not synthesize a held loop chord");
+            f.poll({}); f.poll({false,true,false,0,true,false});
+            check(f.session.snapshot().repeat,"a fresh loop chord must work after enabling training");
+        }
+        {
+            Fixture f; f.command(Action::ReturnToStart); f.tick();
+            f.poll({false,true,false,0,true,false}); f.finish_return(); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"rewinding and return completion must not synthesize a loop press");
+            f.poll({}); f.poll({true,true,true,0,true,false});
+            check(!f.session.snapshot().loop && !f.game.paused,"the playback chord must take priority over the loop chord");
+            f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"releasing the playback chord must not leak a pending loop action");
+            f.shortcuts.reset(); f.poll({false,true,false,0,true,false});
+            check(!f.session.snapshot().loop,"the first input sample must not invent a loop press");
+        }
+        {
+            Fixture f;
+            f.poll({false,false,false,0,true,false});
+            check(f.session.snapshot().in==60 && f.session.snapshot().out==180 && f.game.paused && !f.game.seeks,
+                  "BT-A must mark the paused cursor as IN without moving playback");
+            f.command(Action::Seek,90); f.tick();
+            f.poll({false,false,false,0,true,true});
+            check(f.session.snapshot().in==60 && f.session.snapshot().out==90 && f.game.paused,
+                  "held BT-A must not repeat while a new BT-D press marks OUT");
+            f.poll({}); f.command(Action::Seek,75); f.tick();
+            f.poll({false,false,false,0,true,false});
+            check(f.session.snapshot().in==75,"release and repress must mark the new cursor");
+            f.poll({false,false,false,0,false,true});
+            check(f.session.snapshot().out==90,"marker shortcuts must retain the minimum loop range validation");
+        }
+        {
+            Fixture f; f.command(Action::Resume); f.tick();
+            f.poll({false,false,false,0,true,true});
+            check(f.session.snapshot().in==0 && f.session.snapshot().out==180,"playing must ignore both marker keys");
+            f.command(Action::Pause); f.tick(); f.poll({false,false,false,0,true,true});
+            check(f.session.snapshot().in==0 && f.session.snapshot().out==180,"buttons held from playback must not fire on pause");
+            f.poll({}); f.poll({false,false,false,0,true,false});
+            check(f.session.snapshot().in==60,"a fresh paused press must work after playback");
+        }
+        {
+            Fixture f; f.command(Action::Seek,72); f.command(Action::MarkIn); f.tick();
+            check(f.session.snapshot().in==72,"queued marks must resolve the latest game-thread cursor after a seek");
+            f.game.position=96; f.command(Action::MarkOut); f.tick();
+            check(f.session.snapshot().out==96,"marks must use the sampled native cursor rather than a stale input snapshot");
+            f.command(Action::Resume); f.command(Action::MarkIn); f.command(Action::MarkOut); f.tick();
+            check(f.session.snapshot().in==72 && f.session.snapshot().out==96,"queued resume must prevent subsequent marker commands");
+        }
+        {
+            Fixture f; f.poll({false,false,false,4096});
+            const auto visible=f.session.snapshot().position;
+            f.poll({false,false,false,4096,true,false});
+            check(f.session.snapshot().in==visible && visible<60.125f,
+                  "a mark during knob smoothing must use the visible cursor, not the pending target");
+        }
+        {
+            Fixture f; f.command(Action::Disable); f.tick();
+            f.poll({false,false,false,0,true,true});
+            f.command(Action::MarkIn); f.command(Action::MarkOut); f.tick();
+            check(f.session.snapshot().in==0 && f.session.snapshot().out==180,"disabled training must ignore marker commands");
+            f.command(Action::Enable); f.tick(); f.finish_return();
+            f.poll({false,false,false,0,true,true});
+            check(f.session.snapshot().in==0 && f.session.snapshot().out==180,"enabling training must not synthesize held marker presses");
+        }
+        {
+            Fixture f; f.command(Action::ReturnToStart); f.tick();
+            f.poll({false,false,false,0,true,true});
+            f.command(Action::MarkIn); f.command(Action::MarkOut); f.tick();
+            check(f.session.snapshot().in==0 && f.session.snapshot().out==180,"animated returns must reject marker commands despite native pause");
+            f.finish_return(); f.poll({false,false,false,0,true,true});
+            check(f.session.snapshot().out==180,"return completion must require a fresh marker press");
+            f.command(Action::Seek,35); f.tick(); f.shortcuts.reset();
+            f.poll({false,false,false,0,true,true});
+            check(f.session.snapshot().in==0 && f.session.snapshot().out==180,"the first input sample must not invent marker presses");
+        }
+        {
             Fixture f;
             float previous=f.game.position;
             for(unsigned n=1;n<=24;++n) {
@@ -333,9 +455,14 @@ int main(int argc,char** argv) {
             std::vector<unsigned char> device(0x8200);
             auto set=[&](std::size_t at,unsigned value) { std::memcpy(device.data()+at,&value,4); };
             set(0x8168,500); set(0x817c,501); set(0x8180,502); set(0x815c,65000);
+            set(0x816c,503); set(0x8178,504);
             std::uintptr_t ptr=reinterpret_cast<std::uintptr_t>(device.data()); GameInput input;
             check(read_game_input(reinterpret_cast<std::uintptr_t>(&ptr),input) && input.start && input.fx_left && input.fx_right && input.vol_left==65000,
                   "native adapter must accept long-held frame counters and the raw encoder");
+            check(input.bt_a && input.bt_d,"native adapter must read BT-A and BT-D consecutive-down counters");
+            set(0x816c,0); set(0x8178,0); set(0x8170,600); set(0x8174,601);
+            check(read_game_input(reinterpret_cast<std::uintptr_t>(&ptr),input) && !input.bt_a && !input.bt_d,
+                  "BT-A and BT-D releases must be independent of BT-B and BT-C");
             set(0x817c,0);
             check(read_game_input(reinterpret_cast<std::uintptr_t>(&ptr),input) && !input.fx_left,"native adapter must observe button release");
             ptr=0; check(!read_game_input(reinterpret_cast<std::uintptr_t>(&ptr),input),"missing native device must fail closed");

@@ -29,7 +29,7 @@ bool read_game_input(std::uintptr_t device_slot,GameInput& input) {
     std::array<std::uint32_t,10> values{};
     if(!ReadProcessMemory(process,reinterpret_cast<const void*>(device+0x815c),values.data(),sizeof(values),nullptr)) return false;
     // Buttons are consecutive-down frame counters, not boolean enums.
-    input={values[3]!=0,values[8]!=0,values[9]!=0,static_cast<std::uint16_t>(values[0])};
+    input={values[3]!=0,values[8]!=0,values[9]!=0,static_cast<std::uint16_t>(values[0]),values[4]!=0,values[7]!=0};
     return true;
 }
 }
