@@ -1,4 +1,10 @@
 #pragma once
 #include <windows.h>
 #include <string_view>
-namespace training { void open_log(HMODULE module); void log(std::string_view line); }
+namespace training {
+enum class LogLevel { Debug, Info, Warn, Error };
+void open_log(HMODULE module);
+bool debug_enabled() noexcept;
+void log(LogLevel level,std::string_view line) noexcept;
+void debug_log(const char* format,...) noexcept;
+}

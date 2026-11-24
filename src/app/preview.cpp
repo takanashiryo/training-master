@@ -94,6 +94,7 @@ bool screenshot(const std::filesystem::path& path) {
 }
 }
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int) {
+    using training::LogLevel;
     const bool smoke=std::wstring(command).find(L"--smoke")!=std::wstring::npos;
     const bool smoke_reset=std::wstring(command).find(L"--smoke-reset")!=std::wstring::npos;
     const bool premium=std::wstring(command).find(L"--premium-time")!=std::wstring::npos;
@@ -106,8 +107,11 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int) {
     const bool paused_preview=std::wstring(command).find(L"--paused")!=std::wstring::npos;
     const bool entry_preview=std::wstring(command).find(L"--entry-rewind")!=std::wstring::npos;
     training::open_log(nullptr);
+    training::log(LogLevel::Info,"Training Master preview starting");
+    training::log(LogLevel::Debug,"Debug logging enabled");
     std::string config_error;
-    if(!training::initialize_preferences(nullptr,config_error)) training::log(config_error);
+    if (!training::initialize_preferences(nullptr,config_error)) training::log(LogLevel::Warn,config_error);
+    else training::log(LogLevel::Debug,"Preview preferences initialized from trainingmaster.ini or defaults");
     WNDCLASSW wc{}; wc.hInstance=instance; wc.lpfnWndProc=proc; wc.lpszClassName=L"TrainingMasterPreview";
     RegisterClassW(&wc);
     auto window_language=training::preferences().snapshot().language;
@@ -116,14 +120,21 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int) {
     };
     auto window=CreateWindowW(wc.lpszClassName,window_title(window_language),WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,CW_USEDEFAULT,narrow?1080:1360,900,nullptr,nullptr,instance,nullptr);
+    if (!window) {
+        training::debug_log("Preview CreateWindowW failed; Windows error=%lu",GetLastError());
+        training::log(LogLevel::Error,"Could not create the preview window");
+        return 1;
+    }
     auto* api=Direct3DCreate9(D3D_SDK_VERSION);
-    if (!window || !api) return 1;
+    if (!api) { training::log(LogLevel::Error,"Could not initialize Direct3D9 in the preview"); return 1; }
     present.Windowed=TRUE; present.SwapEffect=D3DSWAPEFFECT_DISCARD;
     present.hDeviceWindow=window; present.BackBufferFormat=D3DFMT_X8R8G8B8;
     present.PresentationInterval=D3DPRESENT_INTERVAL_ONE;
-    if (FAILED(api->CreateDevice(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,window,D3DCREATE_SOFTWARE_VERTEXPROCESSING,&present,&device))) return 2;
-    if (!training::init_imgui(window,device)) return 3;
-    training::set_overlay_status("OFFLINE PREVIEW / simulated track");
+    const auto device_status=api->CreateDevice(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,window,D3DCREATE_SOFTWARE_VERTEXPROCESSING,&present,&device);
+    training::debug_log("Preview CreateDevice: HRESULT=0x%08lX",static_cast<unsigned long>(device_status));
+    if (FAILED(device_status)) { training::log(LogLevel::Error,"Could not create the preview Direct3D9 device"); return 2; }
+    if (!training::init_imgui(window,device)) { training::log(LogLevel::Error,"Could not initialize the preview interface"); return 3; }
+    training::log(LogLevel::Info,"Training Master preview ready");
     training::show_overlay(true);
     training::Session session;
     const auto options=training::preferences().snapshot();
@@ -157,6 +168,8 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR command,int) {
         session.submit({session.snapshot().generation,training::Action::Enable});
     } else if (smoke) {
         session.submit({session.snapshot().generation,training::Action::Enable});
+        // Exercise consecutive drag samples while keeping the same final seek target.
+        session.submit({session.snapshot().generation,training::Action::Seek,30.f});
         session.submit({session.snapshot().generation,training::Action::Seek,32.f});
         session.submit({session.snapshot().generation,training::Action::SetIn,24.f});
         session.submit({session.snapshot().generation,training::Action::SetOut,48.f});

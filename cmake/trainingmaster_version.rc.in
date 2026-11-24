@@ -1,0 +1,33 @@
+#include <winver.h>
+
+LANGUAGE 0x09, 0x01
+
+1 VERSIONINFO
+FILEVERSION @TRAINING_DLL_VERSION_NUMERIC@
+PRODUCTVERSION @TRAINING_DLL_VERSION_NUMERIC@
+FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+FILEFLAGS 0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_DLL
+FILESUBTYPE 0
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Takanashi Ryo\0"
+            VALUE "FileDescription", "Training Master - SDVX Training Mod\0"
+            VALUE "FileVersion", "@TRAINING_DLL_VERSION@\0"
+            VALUE "InternalName", "trainingmaster\0"
+            VALUE "LegalCopyright", L"Copyright \x00A9 2026 Takanashi Ryo\0"
+            VALUE "OriginalFilename", "trainingmaster.dll\0"
+            VALUE "ProductName", "Training Master\0"
+            VALUE "ProductVersion", "@TRAINING_DLL_VERSION@\0"
+            VALUE "Comments", "Built @TRAINING_BUILD_DATE@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

@@ -4,7 +4,7 @@
 #include <d3d9.h>
 #include <string>
 namespace training {
-void set_overlay_status(std::string status,bool failed=false);
+void set_overlay_failed(bool failed);
 void draw_panel(Session& session);
 void draw_judgment_counter(const State& state);
 void show_overlay(bool value);

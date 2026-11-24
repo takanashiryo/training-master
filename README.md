@@ -17,6 +17,8 @@ Put `trainingmaster.dll` and `trainingmaster.ini` into contents root or modules 
 
 Open game then press `Insert`
 
+Add `--debug` to the end of your existing `-k` command to enable detailed logs 
+
 ## Features
 
 > [!NOTE]  

@@ -25,9 +25,7 @@
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND,UINT,WPARAM,LPARAM);
 namespace training {
 namespace {
-std::mutex status_mutex;
-std::string status_text="Initializing";
-bool status_failed{};
+std::atomic<bool> status_failed{};
 std::atomic<bool> visible{false};
 bool options_open{};
 // A single palette shared by the main panel, Option and About. Keep ImGui's
@@ -432,8 +430,8 @@ void present_overlay(IDirect3DDevice9* device,HWND destination) {
                 old_proc=reinterpret_cast<WNDPROC>(subclass(game_window,GWLP_WNDPROC,reinterpret_cast<LONG_PTR>(window_proc)));
                 if (!old_proc && GetLastError()!=0) {
                     shutdown_imgui();
-                    log("Could not attach overlay input handler");
-                } else { game_device=device; log("ImGui attached to primary D3D9 Present; offscreen EndScene passes are not drawn"); }
+                    log(LogLevel::Warn,"Could not attach overlay input handler");
+                } else { game_device=device; log(LogLevel::Debug,"ImGui attached to primary D3D9 Present; offscreen EndScene passes are not drawn"); }
             }
         }
     }
@@ -488,9 +486,7 @@ HRESULT WINAPI reset_ex(IDirect3DDevice9Ex* device,D3DPRESENT_PARAMETERS* params
     return hr;
 }
 }
-void set_overlay_status(std::string status,bool failed) {
-    std::lock_guard lock(status_mutex); status_text=std::move(status); status_failed=failed;
-}
+void set_overlay_failed(bool failed) { status_failed=failed; }
 void show_overlay(bool value) { visible=value; if(!value) capturing_hotkey=false; }
 bool init_imgui(HWND window,IDirect3DDevice9* device) {
     IMGUI_CHECKVERSION(); ImGui::CreateContext();
@@ -516,7 +512,7 @@ bool init_imgui(HWND window,IDirect3DDevice9* device) {
             ui_font=io.Fonts->AddFontFromFileTTF(reinterpret_cast<const char*>(encoded.c_str()),15.f,&config,ranges.Data);
         }
         if(!ui_font) {
-            log("Microsoft YaHei UI is unavailable; using the default font fallback");
+            log(LogLevel::Debug,"Microsoft YaHei UI is unavailable; using the default font fallback");
             ui_font=io.Fonts->AddFontDefault();
         }
         for (const wchar_t* name:{L"meiryo.ttc",L"msgothic.ttc",L"msyh.ttc"}) {
@@ -531,8 +527,14 @@ bool init_imgui(HWND window,IDirect3DDevice9* device) {
     io.FontDefault=ui_font;
     ImGui::GetStyle().FontSizeBase=15.f;
     apply_theme();
-    if (!ImGui_ImplWin32_Init(window)) { ImGui::DestroyContext(); return false; }
-    if (!ImGui_ImplDX9_Init(device)) { ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext(); return false; }
+    if (!ImGui_ImplWin32_Init(window)) {
+        log(LogLevel::Debug,"ImGui Win32 backend initialization failed");
+        ImGui::DestroyContext(); return false;
+    }
+    if (!ImGui_ImplDX9_Init(device)) {
+        log(LogLevel::Debug,"ImGui D3D9 backend initialization failed");
+        ImGui_ImplWin32_Shutdown(); ImGui::DestroyContext(); return false;
+    }
     game_window=window;
     clear_cover(); cover_device=device;
     return true;
@@ -993,8 +995,7 @@ void draw_panel(Session& session) {
     if (show_shortcuts) ImGui::OpenPopup(i18n::label("Shortcut Keys"));
     draw_about();
     draw_shortcuts();
-    bool failed;
-    { std::lock_guard lock(status_mutex); failed=status_failed; }
+    const bool failed=status_failed.load();
     if(s.access==TrainingAccess::UnsupportedMode) {
         clear_cover();
         ImGui::TextColored({1,1,0,1},"%s",i18n::text("Training can only be enabled in Normal or Premium Time."));
@@ -1003,7 +1004,7 @@ void draw_panel(Session& session) {
     if (failed || !s.playing) {
         clear_cover();
         ImGui::TextColored(failed?ImVec4{1,.2f,.2f,1}:ImVec4{1,1,0,1},"%s",
-                           i18n::text(failed?"Hook entry not found!":"Choose a track to start training."));
+                           i18n::text(failed?"Training is unavailable. See trainingmaster.log.":"Choose a track to start training."));
         ImGui::End(); draw_options(session,focus_options); return;
     }
     const float left=std::min(380.f,ImGui::GetContentRegionAvail().x*.46f);
@@ -1208,41 +1209,68 @@ bool install_overlay(Session& session,std::string& reason) {
     session.set_loop_buffers(options.loop_before,options.loop_after);
     WNDCLASSW wc{}; wc.lpfnWndProc=DefWindowProcW; wc.hInstance=GetModuleHandleW(nullptr); wc.lpszClassName=L"SDVXTrainingProbe";
     const auto atom=RegisterClassW(&wc);
-    if (!atom && GetLastError()!=ERROR_CLASS_ALREADY_EXISTS) { reason="Probe window registration failed"; return false; }
+    if (!atom) {
+        const auto error=GetLastError();
+        debug_log("D3D9 probe RegisterClassW; Windows error=%lu",error);
+        if (error!=ERROR_CLASS_ALREADY_EXISTS) { reason="Probe window registration failed"; return false; }
+    }
     HWND window=CreateWindowW(wc.lpszClassName,L"",WS_OVERLAPPEDWINDOW,0,0,64,64,nullptr,nullptr,wc.hInstance,nullptr);
-    if (!window) { reason="Probe window creation failed"; return false; }
+    if (!window) {
+        debug_log("D3D9 probe CreateWindowW failed; Windows error=%lu",GetLastError());
+        reason="Probe window creation failed"; return false;
+    }
     IDirect3D9Ex* api{}; IDirect3DDevice9Ex* device{};
     D3DPRESENT_PARAMETERS pp{}; pp.Windowed=TRUE; pp.SwapEffect=D3DSWAPEFFECT_DISCARD;
     pp.hDeviceWindow=window; pp.BackBufferFormat=D3DFMT_UNKNOWN;
     HRESULT hr=Direct3DCreate9Ex(D3D_SDK_VERSION,&api);
-    if (SUCCEEDED(hr)) hr=api->CreateDeviceEx(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,window,
-        D3DCREATE_SOFTWARE_VERTEXPROCESSING|D3DCREATE_MULTITHREADED,&pp,nullptr,&device);
+    debug_log("D3D9 probe Direct3DCreate9Ex; HRESULT=0x%08lX",static_cast<unsigned long>(hr));
+    if (SUCCEEDED(hr)) {
+        hr=api->CreateDeviceEx(D3DADAPTER_DEFAULT,D3DDEVTYPE_HAL,window,
+            D3DCREATE_SOFTWARE_VERTEXPROCESSING|D3DCREATE_MULTITHREADED,&pp,nullptr,&device);
+        debug_log("D3D9 probe CreateDeviceEx; HRESULT=0x%08lX",static_cast<unsigned long>(hr));
+    }
     bool ok=SUCCEEDED(hr);
-    std::vector<void*> created;
+    struct CreatedHook { const char* name; void* address; };
+    std::vector<CreatedHook> created;
+    const auto create_hook=[&](const char* name,unsigned slot,void* address,void* replacement,void** original) {
+        const auto status=MH_CreateHook(address,replacement,original);
+        debug_log("D3D9 hook %s; slot=%u entry=%p create=%s",name,slot,address,MH_StatusToString(status));
+        if (status!=MH_OK) return false;
+        created.push_back({name,address});
+        return true;
+    };
     if (ok) {
         auto** table=*reinterpret_cast<void***>(device);
-        struct Hook { unsigned slot; void* replacement; void** original; };
+        struct Hook { const char* name; unsigned slot; void* replacement; void** original; };
         const Hook hooks[]{
-            {17,reinterpret_cast<void*>(present),reinterpret_cast<void**>(&original_present)},
-            {121,reinterpret_cast<void*>(present_ex),reinterpret_cast<void**>(&original_present_ex)},
-            {16,reinterpret_cast<void*>(reset),reinterpret_cast<void**>(&original_reset)},
-            {132,reinterpret_cast<void*>(reset_ex),reinterpret_cast<void**>(&original_reset_ex)}
+            {"Present",17,reinterpret_cast<void*>(present),reinterpret_cast<void**>(&original_present)},
+            {"PresentEx",121,reinterpret_cast<void*>(present_ex),reinterpret_cast<void**>(&original_present_ex)},
+            {"Reset",16,reinterpret_cast<void*>(reset),reinterpret_cast<void**>(&original_reset)},
+            {"ResetEx",132,reinterpret_cast<void*>(reset_ex),reinterpret_cast<void**>(&original_reset_ex)}
         };
         for (const auto& h:hooks) {
-            if (MH_CreateHook(table[h.slot],h.replacement,h.original)!=MH_OK) { ok=false; break; }
-            created.push_back(table[h.slot]);
+            if (!create_hook(h.name,h.slot,table[h.slot],h.replacement,h.original)) { ok=false; break; }
         }
         if (ok) {
             Microsoft::WRL::ComPtr<IDirect3DSwapChain9> chain;
-            ok=SUCCEEDED(device->GetSwapChain(0,&chain));
+            hr=device->GetSwapChain(0,&chain);
+            debug_log("D3D9 probe GetSwapChain; HRESULT=0x%08lX",static_cast<unsigned long>(hr));
+            ok=SUCCEEDED(hr);
             if (ok) {
                 auto** swap_table=*reinterpret_cast<void***>(chain.Get());
-                ok=MH_CreateHook(swap_table[3],reinterpret_cast<void*>(swap_present),reinterpret_cast<void**>(&original_swap_present))==MH_OK;
-                if (ok) created.push_back(swap_table[3]);
+                ok=create_hook("SwapChain::Present",3,swap_table[3],reinterpret_cast<void*>(swap_present),reinterpret_cast<void**>(&original_swap_present));
             }
         }
-        if (ok) { for (auto* p:created) MH_QueueEnableHook(p); ok=MH_ApplyQueued()==MH_OK; }
-        if (!ok) for (auto* p:created) { MH_DisableHook(p); MH_RemoveHook(p); }
+        if (ok) {
+            for (const auto& hook:created) {
+                const auto queued=MH_QueueEnableHook(hook.address);
+                debug_log("D3D9 hook %s; queue enable=%s",hook.name,MH_StatusToString(queued));
+            }
+            const auto status=MH_ApplyQueued();
+            debug_log("D3D9 hook activation; hooks=%zu apply=%s",created.size(),MH_StatusToString(status));
+            ok=status==MH_OK;
+        }
+        if (!ok) for (const auto& hook:created) { MH_DisableHook(hook.address); MH_RemoveHook(hook.address); }
     }
     if (device) device->Release();
     if (api) api->Release();

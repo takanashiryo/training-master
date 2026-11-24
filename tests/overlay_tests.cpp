@@ -92,14 +92,14 @@ int main() {
         io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
         training::Session session;
         training::show_overlay(true);
-        training::set_overlay_status("Game hooks ready");
+        training::set_overlay_failed(false);
         only_message(render(session),"Choose a track to start training.");
         check(has_color(IM_COL32(255,255,0,255)),"waiting message must be yellow");
-        training::set_overlay_status("play_state: signature not found",true);
+        training::set_overlay_failed(true);
         const auto failure=render(session);
-        only_message(failure,"Hook entry not found!");
+        only_message(failure,"Training is unavailable. See trainingmaster.log.");
         check(has_color(IM_COL32(255,51,51,255)),"hook failure message must be red");
-        training::set_overlay_status("Game hooks ready");
+        training::set_overlay_failed(false);
         const auto ready=render(session);
         only_message(ready,"Choose a track to start training.");
         TransportBackend restricted_backend;
@@ -338,9 +338,13 @@ int main() {
         auto* about=ImGui::FindWindowByName(training::i18n::label("About Training Master"));
         check(about!=nullptr,"translated About window must exist");
         ImGui::ActivateItemByID(about->GetID(training::i18n::label("Close"))); render(session);
-        training::set_overlay_status("missing test hook",true);
-        check(render(session).find("未找到 Hook 入口！")!=std::string::npos,"hook error must be localized");
-        training::set_overlay_status("Game hooks ready");
+        training::set_overlay_failed(true);
+        const auto chinese_failure=render(session);
+        check(chinese_failure.find("训练功能不可用，请查看 trainingmaster.log。")!=std::string::npos &&
+              chinese_failure.find("未找到 Hook 入口！")==std::string::npos &&
+              chinese_failure.find("曲目 ID")==std::string::npos && has_color(IM_COL32(255,51,51,255)),
+              "hook failure must display the short, localized error instead of training controls");
+        training::set_overlay_failed(false);
         training::Session idle;
         check(render(idle).find("请选择一首曲目以开始训练。")!=std::string::npos,"idle status must be localized");
         idle.set_access(training::TrainingAccess::UnsupportedMode,restricted_backend);
@@ -361,8 +365,8 @@ int main() {
         auto* english_about_window=ImGui::FindWindowByName(training::i18n::label("About Training Master"));
         check(english_about_window!=nullptr,"English About window must exist");
         ImGui::ActivateItemByID(english_about_window->GetID(training::i18n::label("Close"))); render(session);
-        training::set_overlay_status("another detailed hook failure",true);
-        only_message(render(session),"Hook entry not found!");
+        training::set_overlay_failed(true);
+        only_message(render(session),"Training is unavailable. See trainingmaster.log.");
         std::filesystem::remove(config); ImGui::DestroyContext(); std::cout<<"Overlay hook-failure status scenarios passed\n"; return 0;
     } catch (const std::exception& error) {
         std::error_code cleanup_error; std::filesystem::remove(config,cleanup_error);

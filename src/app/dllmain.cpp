@@ -6,21 +6,31 @@
 #include <MinHook.h>
 namespace {
 DWORD WINAPI start(void* module) {
+    using training::LogLevel;
     training::open_log(static_cast<HMODULE>(module));
+    training::log(LogLevel::Info,std::string("Training Master ")+training::about::build_date+" starting");
+    training::log(LogLevel::Debug,"Debug logging enabled");
     std::string config_error;
-    if(!training::initialize_preferences(static_cast<HMODULE>(module),config_error)) training::log(config_error);
-    training::log(std::string("Training Master ")+training::about::build_date+" starting (disabled by default)");
+    if (!training::initialize_preferences(static_cast<HMODULE>(module),config_error)) training::log(LogLevel::Warn,config_error);
+    else training::log(LogLevel::Debug,"Preferences initialized from trainingmaster.ini or defaults");
     const auto mh=MH_Initialize();
-    if (mh!=MH_OK) { training::log("MinHook initialization failed"); return 1; }
+    training::debug_log("MinHook initialization: %s",MH_StatusToString(mh));
+    if (mh!=MH_OK) { training::log(LogLevel::Error,"MinHook initialization failed"); return 1; }
+    const auto wait_start=GetTickCount64();
     HMODULE game{};
     for (int i=0;i<1200 && !game;++i) { game=GetModuleHandleW(L"soundvoltex.dll"); if (!game) Sleep(100); }
-    if (!game) { training::log("soundvoltex.dll was not loaded within 120 seconds"); return 2; }
+    training::debug_log("Waited %llu ms for soundvoltex.dll; module=%p",GetTickCount64()-wait_start,static_cast<void*>(game));
+    if (!game) { training::log(LogLevel::Error,"soundvoltex.dll was not loaded within 120 seconds"); return 2; }
     std::string reason;
-    if (!training::install_overlay(training::game_session(),reason)) { training::log(reason); return 3; }
-    training::log(reason);
+    if (!training::install_overlay(training::game_session(),reason)) { training::log(LogLevel::Error,reason); return 3; }
+    training::log(LogLevel::Debug,reason);
     const bool ok=training::install_game_hooks(game,reason);
-    training::set_overlay_status(reason,!ok);
-    training::log(reason);
+    training::set_overlay_failed(!ok);
+    if (ok) training::log(LogLevel::Info,reason);
+    else {
+        training::log(LogLevel::Error,"Game hooks failed to initialize. Launch with --debug for details.");
+        training::log(LogLevel::Debug,reason);
+    }
     return ok?0:4;
 }
 }

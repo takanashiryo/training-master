@@ -77,7 +77,7 @@ inline constexpr Translation catalog[]{
     TM_TEXT("Initial Gauge: %.1f%%","初始血量：%.1f%%"),
     TM_TEXT("Native AutoPlay is unavailable.","原生自动演奏不可用。"),
     TM_TEXT("Finish Immediately","立即结束"),
-    TM_TEXT("Hook entry not found!","未找到 Hook 入口！"),
+    TM_TEXT("Training is unavailable. See trainingmaster.log.","训练功能不可用，请查看 trainingmaster.log。"),
     TM_TEXT("Choose a track to start training.","请选择一首曲目以开始训练。"),
     TM_TEXT("Training can only be enabled in Normal or Premium Time.","只有Normal或Premium Time下可开启训练"),
     TM_TEXT("Loop off (click: repeat selection)","循环已关闭（点击：持续循环）"),

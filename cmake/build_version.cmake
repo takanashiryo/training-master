@@ -16,3 +16,11 @@ inline constexpr char build_date[]=\"@TRAINING_BUILD_DATE@\";
 }
 "
   @ONLY NEWLINE_STYLE UNIX)
+
+if(DEFINED TRAINING_VERSION_RESOURCE)
+  set(TRAINING_DLL_VERSION "0.1.67")
+  # Windows stores four numeric components in VERSIONINFO.
+  string(REPLACE "." "," TRAINING_DLL_VERSION_NUMERIC "${TRAINING_DLL_VERSION}.0")
+  configure_file("${CMAKE_CURRENT_LIST_DIR}/trainingmaster_version.rc.in"
+    "${TRAINING_VERSION_RESOURCE}" @ONLY NEWLINE_STYLE UNIX)
+endif()

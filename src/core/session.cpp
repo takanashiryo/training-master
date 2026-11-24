@@ -1,10 +1,30 @@
 #include "core/session.hpp"
 #include "core/playback_rate.hpp"
+#include "platform/log.hpp"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <utility>
 
 namespace training {
+namespace {
+const char* action_name(Action action) {
+    constexpr auto names=std::to_array({"Enable","Disable","Pause","Resume","Seek","SetIn","SetOut","SetLoop",
+        "SetRate","Restart","Finish","SetRegion","SetAutoplay","Reverse","SetCameraLocked","SetRepeat",
+        "SetLaneSpeedLocked","SetGaugeEnabled","SetGaugeType","SetGaugeInitial","CycleLoop","SetAutoplayMode",
+        "SetHideSongVisuals","TogglePlayback","ReturnToStart","ScrubBy","MarkIn","MarkOut","CycleLoopPaused"});
+    const auto index=static_cast<std::size_t>(action);
+    return index<names.size()?names[index]:"Unknown";
+}
+
+void trace_state(const char* event,const State& s) {
+    debug_log("%s; session=%llu music=%u position=%.3f rate=%.2f in=%.3f out=%.3f enabled=%d ready=%d "
+        "paused=%d loop=%d repeat=%d loops=%llu reversing=%d rewinding=%d scrubbing=%d at_end=%d finish=%d status=%s",
+        event,static_cast<unsigned long long>(s.generation),s.track.music_id,s.position,s.rate,s.in,s.out,s.enabled,
+        s.ready,s.paused,s.loop,s.repeat,static_cast<unsigned long long>(s.loops),s.reversing,s.rewinding,
+        s.scrubbing,s.at_end,s.finish_requested,s.message.c_str());
+}
+}
 LoopRange loop_range(const State& s) {
     const double duration=std::max(0.,static_cast<double>(s.track.duration));
     return {static_cast<float>(std::clamp(static_cast<double>(s.in)-s.loop_before,0.,duration)),
@@ -42,6 +62,11 @@ void Session::begin(Track track, bool ready, bool previously_tainted) {
     commands_.clear();
     rewind_from_=rewind_elapsed_=rewind_duration_=rewind_target_=0.f; rewind_muted_=loop_return_=rewind_reset_gauge_=false;
     scrub_target_=scrub_idle_=scrub_direction_=0.f;
+    debug_log("Session began; session=%llu music=%u difficulty=%u duration=%.3f ready=%d tainted=%d "
+        "autoplay=%d camera=%d lane_speed=%d gauge=%d song_visuals=%d reverse_audio=%d",
+        static_cast<unsigned long long>(generation),state_.track.music_id,state_.track.difficulty,state_.track.duration,
+        state_.ready,state_.tainted,state_.track.autoplay_ready,state_.track.camera_ready,state_.track.lane_speed_ready,
+        state_.track.gauge_ready,state_.track.song_visuals_ready,static_cast<bool>(state_.track.reverse_audio));
 }
 void Session::end(Backend& backend) {
     std::lock_guard lock(mutex_);
@@ -50,12 +75,15 @@ void Session::end(Backend& backend) {
 void Session::set_access(TrainingAccess access,Backend& backend) {
     std::lock_guard lock(mutex_);
     if(state_.access==access) return;
+    debug_log("Training access changed; session=%llu music=%u from=%d to=%d",
+        static_cast<unsigned long long>(state_.generation),state_.track.music_id,static_cast<int>(state_.access),static_cast<int>(access));
     if(access!=TrainingAccess::Allowed && state_.playing) end_locked(backend);
     state_.access=access;
     if(access!=TrainingAccess::Allowed) state_.ready=false;
     commands_.clear();
 }
 void Session::end_locked(Backend& backend) {
+    if (debug_enabled() && state_.playing) trace_state("Session ending",state_);
     if(state_.scrubbing) commit_scrub(backend);
     backend.music_gain(1.f);
     backend.release_gauge(); state_.gauge.enabled=false;
@@ -78,8 +106,15 @@ void Session::submit(Command command) {
     std::lock_guard lock(mutex_);
     // A slow game frame may receive many slider samples. Only the latest
     // consecutive target matters; preserve ordering around all other actions.
-    if(command.action==Action::Seek && !commands_.empty() &&
-       commands_.back().action==Action::Seek && commands_.back().generation==command.generation) {
+    const bool coalesced=command.action==Action::Seek && !commands_.empty() &&
+        commands_.back().action==Action::Seek && commands_.back().generation==command.generation;
+    if (debug_enabled() && command.action==Action::Seek) {
+        const auto* result=coalesced?"coalesced":commands_.size()<128?"queued":"dropped (queue full)";
+        debug_log("Seek request; session=%llu current_session=%llu music=%u position=%.3f target=%.3f result=%s",
+            static_cast<unsigned long long>(command.generation),static_cast<unsigned long long>(state_.generation),
+            state_.track.music_id,state_.position,command.value,result);
+    }
+    if (coalesced) {
         commands_.back()=command; return;
     }
     if (commands_.size() < 128) commands_.push_back(command);
@@ -94,7 +129,13 @@ bool Session::navigation_active() const {
 }
 bool Session::suppress_result() const { std::lock_guard lock(mutex_); return state_.tainted; }
 bool Session::native_exit_locked() const { std::lock_guard lock(mutex_); return state_.tainted && !state_.finish_requested; }
-void Session::result_blocked() { std::lock_guard lock(mutex_); ++state_.blocked_results; }
+void Session::result_blocked() {
+    std::lock_guard lock(mutex_);
+    ++state_.blocked_results;
+    debug_log("Score collection blocked; session=%llu music=%u count=%llu finish_requested=%d",
+        static_cast<unsigned long long>(state_.generation),state_.track.music_id,
+        static_cast<unsigned long long>(state_.blocked_results),state_.finish_requested);
+}
 void Session::camera_unavailable() {
     std::lock_guard lock(mutex_);
     state_.camera_locked=state_.track.camera_ready=false;
@@ -154,6 +195,8 @@ bool Session::start_rewind(float target,bool loop_return,Backend& b,bool reset_n
     rewind_target_=target; loop_return_=loop_return;
     rewind_reset_gauge_=reset_native_gauge;
     rewind_duration_=std::clamp(std::fabs(rewind_from_-target)/120.f,.35f,1.25f);
+    debug_log("Rewind started; session=%llu music=%u from=%.3f target=%.3f duration=%.3f loop_return=%d gauge_return=%d",
+        static_cast<unsigned long long>(s.generation),s.track.music_id,rewind_from_,target,rewind_duration_,loop_return,s.gauge_returning);
     return true;
 }
 bool Session::release_rewind_mute(Backend& b) {
@@ -164,12 +207,15 @@ bool Session::pause_at_end(Backend& b) {
     // Never seek here: seeking rebuilds native note/judgment history and could
     // suppress a just-earned UC/PUC/S-PUC announcement in the player updater.
     state_.at_end=true; state_.position=state_.track.duration; state_.paused=true;
-    return b.pause(true);
+    const bool ok=b.pause(true);
+    if (debug_enabled()) trace_state(ok?"Paused at track end":"Track end pause failed",state_);
+    return ok;
 }
 bool Session::commit_scrub(Backend& b) {
     if(!state_.scrubbing) return true;
     // Reuse ordinary seek's gauge and boundary handling. Commit the visible
     // position so Play or another transport action never resumes stale audio.
+    if (debug_enabled()) trace_state("Committing scrub",state_);
     return apply({state_.generation,Action::Seek,state_.position},b);
 }
 bool Session::update_scrub(float elapsed_seconds,Backend& b) {
@@ -214,9 +260,11 @@ bool Session::intercept_track_end(float position,Backend& b) {
 }
 bool Session::apply(const Command& c, Backend& b) {
     auto& s = state_;
-    if(s.access!=TrainingAccess::Allowed) return true;
-    if (c.generation != s.generation || !s.playing || !std::isfinite(c.value)) return true;
-    if(s.finish_requested) return true;
+    if (s.access!=TrainingAccess::Allowed || c.generation!=s.generation || !s.playing || !std::isfinite(c.value) || s.finish_requested) {
+        debug_log("Command ignored; access=%d stale_session=%d playing=%d finite_value=%d finish_requested=%d",
+            static_cast<int>(s.access),c.generation!=s.generation,s.playing,std::isfinite(c.value),s.finish_requested);
+        return true;
+    }
     if (c.action==Action::SetGaugeEnabled || c.action==Action::SetGaugeType || c.action==Action::SetGaugeInitial) {
         if (c.action==Action::SetGaugeEnabled && !c.value) {
             auto config=s.gauge; config.enabled=false;
@@ -347,7 +395,12 @@ bool Session::apply(const Command& c, Backend& b) {
             const auto range=loop_range(s);
             s.position=s.reversing?std::min(s.position,range.end):std::max(s.position,range.start);
         }
-        if (!b.seek(s.position)) return false;
+        {
+            const bool ok=b.seek(s.position);
+            debug_log("Seek result; session=%llu music=%u requested=%.3f actual_target=%.3f backend_ok=%d",
+                static_cast<unsigned long long>(s.generation),s.track.music_id,c.value,s.position,ok);
+            if (!ok) return false;
+        }
         if ((s.gauge.enabled || s.gauge_returning) && (s.position<=.001f || std::fabs(s.position-s.in)<=.001f ||
             (s.loop && std::fabs(s.position-loop_range(s).start)<=.001f)) && !b.reset_gauge()) return false;
         s.rewinding=s.gauge_returning=s.at_end=false;
@@ -360,6 +413,8 @@ bool Session::apply(const Command& c, Backend& b) {
         const float base=!s.scrubbing || c.value*scrub_direction_<0.f?s.position:scrub_target_;
         scrub_target_=static_cast<float>(std::clamp(static_cast<double>(base)+c.value,0.,static_cast<double>(s.track.duration)));
         if(!s.scrubbing && scrub_target_==s.position) break;
+        debug_log("Scrub target changed; session=%llu music=%u from=%.3f delta=%.3f target=%.3f",
+            static_cast<unsigned long long>(s.generation),s.track.music_id,s.position,c.value,scrub_target_);
         s.scrubbing=true; s.at_end=false; scrub_idle_=0.f; scrub_direction_=c.value;
         break;
     }
@@ -416,6 +471,7 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
     std::lock_guard lock(mutex_);
     if (!state_.playing) return;
     if (!std::isfinite(position)) {
+        if (state_.message!="Invalid game clock") log(LogLevel::Warn,"Training paused because the game clock became invalid");
         if (state_.reversing) { b.reverse(false); b.pause(true); state_.reversing=false; state_.paused=true; }
         state_.rewinding=state_.scrubbing=false;
         state_.ready = false; state_.autoplay=state_.camera_locked=false; state_.message = "Invalid game clock"; return;
@@ -427,7 +483,13 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
     bool ok = true;
     while (!commands_.empty()) {
         const auto c = commands_.front(); commands_.pop_front();
-        if (!apply(c,b)) { ok = false; break; }
+        const bool trace=debug_enabled();
+        if (trace) debug_log("Processing command %s; session=%llu current_session=%llu music=%u value=%.3f end=%.3f",
+            action_name(c.action),static_cast<unsigned long long>(c.generation),static_cast<unsigned long long>(state_.generation),
+            state_.track.music_id,c.value,c.end);
+        ok=apply(c,b);
+        if (trace) trace_state(ok?"State after command":"Command failed",state_);
+        if (!ok) break;
     }
     if(ok) ok=update_scrub(elapsed_seconds,b);
     if (ok && !state_.rewinding && state_.enabled && !state_.paused && state_.loop) {
@@ -438,6 +500,8 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
         if(outside_entry) {
             const float target=state_.reversing?range.end:range.start;
             ok=b.seek(target);
+            debug_log("Loop entry seek; session=%llu music=%u from=%.3f target=%.3f backend_ok=%d",
+                static_cast<unsigned long long>(state_.generation),state_.track.music_id,state_.position,target,ok);
             if(ok && (state_.gauge.enabled || state_.gauge_returning)) ok=b.reset_gauge();
             if(ok) state_.position=target;
         }
@@ -460,6 +524,7 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
             if (ok) {
                 state_.position=rewind_target_; state_.paused=!resume; state_.rewinding=state_.gauge_returning=false;
                 if (loop_return_) ++state_.loops;
+                if (debug_enabled()) trace_state("Rewind completed",state_);
             }
             // A non-repeating return remains muted until explicit Play/Reverse or exit.
         } else {
@@ -470,7 +535,10 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
         if (state_.reversing && state_.position<=0.f) {
             ok=b.pause(true);
             if (ok && state_.gauge.enabled) ok=b.reset_gauge();
-            if (ok) { state_.position=0; state_.paused=true; }
+            if (ok) {
+                state_.position=0; state_.paused=true;
+                if (debug_enabled()) trace_state("Reverse playback reached start",state_);
+            }
         }
     }
     if(ok && state_.tainted && !state_.finish_requested && !state_.loop && !state_.reversing && !state_.rewinding &&
@@ -478,6 +546,8 @@ void Session::tick(float position, bool native_paused, Backend& b,float elapsed_
     b.music_gain(loop_gain(state_));
     if (ok && state_.enabled && state_.reversing && !state_.rewinding) ok=b.sync_reverse_chart(state_.position);
     if (!ok) {
+        log(LogLevel::Warn,"Transport failed; paused. Results remain blocked. Use Finish Immediately.");
+        if (debug_enabled()) trace_state("Transport failure",state_);
         if (state_.reversing) b.reverse(false);
         b.pause(true); b.rate(1.f);
         state_.reversing=false;

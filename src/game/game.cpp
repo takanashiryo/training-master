@@ -143,20 +143,23 @@ bool transport_pause(Ptr world, bool paused) {
             fn<void(__fastcall*)(Ptr,Ptr)>(native::addresses().audio_stop)(field<Ptr>(world,184),0);
         QueryPerformanceCounter(&last_qpc);
         ++flush_generation;
-        log(paused?"Transport paused":"Transport resumed");
+        log(LogLevel::Debug,paused?"Transport paused":"Transport resumed");
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 bool transport_seek(Ptr world, float target,bool seek_audio=true) {
     __try {
         const auto timer=field<Ptr>(world,216);
-        if (!timer || !std::isfinite(target)) return false;
+        if (!timer || !std::isfinite(target)) {
+            debug_log("Native seek rejected; timer=%p target=%.3f audio=%d",reinterpret_cast<void*>(timer),target,seek_audio);
+            return false;
+        }
         if(updating_world==world && current_world==world) suppress_posteffects=true;
         float delta=target-position(timer);
         if(current_world==world && song_animation_ready && std::fabs(delta)>.000001f &&
            !song_visual_control.transport(world,true,original_posteffect_event,GetTickCount64())) {
-            log("Post-effect cleanup before seek failed");
-            log(song_visual_control.error());
+            log(LogLevel::Warn,"Post-effect cleanup before seek failed");
+            log(LogLevel::Debug,song_visual_control.error());
             return false;
         }
         fn<void(__fastcall*)(Ptr,const float*)>(native::addresses().timer_seek)(timer,&delta);
@@ -175,8 +178,12 @@ bool transport_seek(Ptr world, float target,bool seek_audio=true) {
         QueryPerformanceCounter(&last_qpc);
         if (seek_audio) ++flush_generation;
         if(current_world==world) judgment::restore(target);
+        if (seek_audio) debug_log("Native seek completed; target=%.3f delta=%.3f",target,delta);
         return true;
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        debug_log("Native seek raised Windows exception 0x%08lX; target=%.3f audio=%d",GetExceptionCode(),target,seek_audio);
+        return false;
+    }
 }
 class GameBackend final : public Backend {
 public:
@@ -190,11 +197,12 @@ public:
     bool gauge_failed(bool& failed) override { return gauge_control.failed(world,failed); }
     bool track_complete(bool& complete) override { return native_track_complete(image,world,complete); }
     bool reset_gauge() override { return gauge_control.reset(world); }
-    void release_gauge() override { if(!gauge_control.release(world)) log("Gauge restoration failed"); }
+    void release_gauge() override { if(!gauge_control.release(world)) log(LogLevel::Warn,"Gauge restoration failed"); }
     bool lane_speed(bool locked) override {
         if(!lane_control.set_locked(world,locked)) return false;
         const bool ok=transport_seek(world,position(field<Ptr>(world,216)),false);
-        log(ok?(locked?"Lane Speed fixed":"Lane Speed restored"):"Lane Speed display refresh failed");
+        if (ok) log(LogLevel::Debug,locked?"Lane Speed fixed":"Lane Speed restored");
+        else log(LogLevel::Warn,"Lane Speed display refresh failed");
         return ok;
     }
     void release_lane_speed() override { lane_control.release(world); }
@@ -206,14 +214,17 @@ public:
         const bool reverse=reverse_player.owns_bus();
         const bool ok=transport_seek(world,seconds,!reverse);
         if (ok && reverse) reverse_player.seek(seconds);
-        log(std::string(ok?"Seek to ":"Seek failed: ")+std::to_string(seconds)+" seconds");
+        debug_log("Native transport seek; target=%.3f reverse=%d backend_ok=%d",seconds,reverse,ok);
         return ok;
     }
     bool rate(float value) override {
-        if (!feeder_seen.load() && value!=1.f) return false;
+        if (!feeder_seen.load() && value!=1.f) {
+            debug_log("Native playback rate rejected; rate=%.2f audio feeder unavailable",value);
+            return false;
+        }
         requested_rate=value; QueryPerformanceCounter(&last_qpc);
         if (reverse_player.owns_bus()) reverse_player.rate(value);
-        log("Synchronized chart/music rate: "+std::to_string(value)); return true;
+        debug_log("Synchronized chart/music rate: %.2f",value); return true;
     }
     bool finish() override {
         // Resume at the end, then enter native cleanup without end-of-track presentation.
@@ -233,7 +244,7 @@ public:
         const auto audio=field<Ptr>(world,184);
         const float gain=audio?std::clamp(field<unsigned>(audio,56)/127.f,0.f,1.f):1.f;
         reverse_player.start(clip,position(field<Ptr>(world,216)),requested_rate.load(),gain);
-        log("Reverse playback started; native music paused, decoded PCM drives chart clock");
+        log(LogLevel::Debug,"Reverse playback started; native music paused, decoded PCM drives chart clock");
         return true;
     }
     bool sync_reverse_chart(float seconds) override {
@@ -244,7 +255,7 @@ public:
     bool mute(bool value) override {
         if (music_muted.exchange(value)!=value) {
             ++flush_generation;
-            log(value?"Music bus muted for training rewind":"Music bus restored after training rewind");
+            log(LogLevel::Debug,value?"Music bus muted for training rewind":"Music bus restored after training rewind");
         }
         return true;
     }
@@ -265,7 +276,7 @@ Track read_track(Ptr world) {
     const char* lane_reason{};
     t.lane_speed_ready=lane_control.available(world,&lane_reason);
     t.gauge_ready=gauge_control.available(world);
-    log(std::string("Lane Speed context: ")+lane_reason);
+    debug_log("Lane Speed context: %s",lane_reason?lane_reason:"no diagnostic");
     t.native_quick_finish=field<int>(image,native::addresses().game_mode)==6;
     t.music_id=field<std::uint32_t>(world,native::world_layout().music);
     t.difficulty=field<std::uint32_t>(world,native::world_layout().music+4);
@@ -276,7 +287,8 @@ Track read_track(Ptr world) {
             __try { std::memcpy(target,reinterpret_cast<const void*>(source),size); return true; }
             __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
         });
-        if (!t.preview->error.empty()) log("Chart preview unavailable: "+t.preview->error);
+        debug_log("Chart preview loaded; music=%u notes=%zu lasers=%zu error=%s",
+            t.music_id,t.preview->notes.size(),t.preview->lasers.size(),t.preview->error.c_str());
     }
     t.chart=read_world_string(world,native::world_layout().chart_path);
     t.info=song_catalog.lookup(t.music_id,t.difficulty,t.chart);
@@ -286,6 +298,8 @@ Track read_track(Ptr world) {
         const auto path_on_disk=reverse_audio_path(contents_root,audio_path);
         if (!path_on_disk.empty()) t.reverse_audio=std::make_shared<ReverseAsset>(path_on_disk);
     }
+    debug_log("Track resources; music=%u chart=%s preview=%d metadata=%d native_bgm=%d reverse_decode_requested=%d",
+        t.music_id,t.chart.c_str(),static_cast<bool>(t.preview),static_cast<bool>(t.info),!audio_path.empty(),static_cast<bool>(t.reverse_audio));
     reverse_asset=t.reverse_audio;
     reverse_reported=false;
     return t;
@@ -299,7 +313,7 @@ void stop_for_native_finish(Ptr world) {
         // Session::end retains taint for the score and scene hooks that follow.
         GameBackend backend(world);
         session.end(backend);
-        log("Premium Time native quick finish: training transport stopped; result guard retained");
+        log(LogLevel::Debug,"Premium Time native quick finish: training transport stopped; result guard retained");
     }
 }
 void publish_training_access(TrainingAccess access,Ptr world) {
@@ -340,15 +354,13 @@ void __fastcall world_update_hook(Ptr world) {
             field<Ptr>(timer,0)==image+native::addresses().game_timer_vtable;
         session.begin(read_track(world),ready,is_tainted(world));
         QueryPerformanceCounter(&last_qpc);
-        const auto metadata=session.snapshot();
-        log("Gameplay entered; music="+std::to_string(metadata.track.music_id)+
-            " mode="+std::to_string(field<int>(image,native::addresses().game_mode))+
-            " chart="+std::to_string(metadata.track.difficulty)+" duration="+std::to_string(metadata.track.duration)+
-            " supported="+std::to_string(supported(world))+" music_select_id="+std::to_string(music_select_route.process_id)+
-            " audio_ready="+std::to_string(feeder_seen.load())+
-            " camera_ready="+std::to_string(metadata.track.camera_ready)+
-            " lane_speed_ready="+std::to_string(metadata.track.lane_speed_ready)+
-            " gauge_ready="+std::to_string(metadata.track.gauge_ready)+"; training defaults to OFF");
+        if (debug_enabled()) {
+            const auto metadata=session.snapshot();
+            debug_log("Gameplay entered; music=%u session=%llu mode=%d difficulty=%u duration=%.3f supported=%d "
+                "music_select_id=%d audio_ready=%d timer_present=%d ready=%d",
+                metadata.track.music_id,static_cast<unsigned long long>(metadata.generation),field<int>(image,native::addresses().game_mode),
+                metadata.track.difficulty,metadata.track.duration,supported(world),music_select_route.process_id,feeder_seen.load(),timer!=0,ready);
+        }
     }
     if (active && current_world==world && judgment_color_option) {
         const auto now=GetTickCount64();
@@ -366,13 +378,14 @@ void __fastcall world_update_hook(Ptr world) {
             song_animation_ready=false;
             GameBackend backend(world); backend.reverse(false); backend.pause(true);
             const auto state=session.snapshot(); session.submit({state.generation,Action::Pause});
-            log("Post-effect cleanup after navigation failed"); log(song_visual_control.error());
+            log(LogLevel::Warn,"Post-effect cleanup after navigation failed");
+            log(LogLevel::Debug,song_visual_control.error());
         }
         if(!session.camera_requested()) { cursor_control.reset(); visual_control.reset(); }
         if(!lane_control.before_update(world)) lane_fault=true;
         if (!camera_control.before_update(world) && !camera_reported) {
             camera_reported=true; session.camera_unavailable();
-            log("Camera pose restore failed; camera control disabled for this track");
+            log(LogLevel::Warn,"Camera pose restore failed; camera control disabled for this track");
         }
         stop_for_native_finish(world);
     }
@@ -410,11 +423,11 @@ void __fastcall world_update_hook(Ptr world) {
             lane_reported=true;
             GameBackend backend(world); backend.reverse(false); backend.pause(true); backend.release_lane_speed();
             session.lane_speed_unavailable();
-            log("Lane Speed context failed; paused with results blocked");
+            log(LogLevel::Warn,"Lane Speed context failed; paused with results blocked");
         }
         if (session.camera_requested() && !camera_updated && !camera_reported) {
             camera_reported=true; session.camera_unavailable();
-            log("Camera updater did not run; camera control disabled for this track");
+            log(LogLevel::Warn,"Camera updater did not run; camera control disabled for this track");
         }
     }
     if (current_world==world && field<Ptr>(world,24)!=image+native::addresses().play_state) {
@@ -427,7 +440,8 @@ void __fastcall world_update_hook(Ptr world) {
         const auto state=session.snapshot();
         if(!song_visual_control.apply(world,state.playing && state.enabled && state.ready && state.hide_song_visuals)) {
             session.song_visuals_unavailable();
-            log("Song visual context failed; native presentation restored: "+song_visual_control.error());
+            log(LogLevel::Warn,"Song visual control failed; native presentation restored");
+            log(LogLevel::Debug,song_visual_control.error());
         }
     }
 }
@@ -440,7 +454,7 @@ void __fastcall input_check_update_hook(Ptr checker) {
     if(!update_game_input_check(original_input_check_update,checker,input_check_vtable,owned)) {
         if(!input_check_fault_reported) {
             input_check_fault_reported=true;
-            log("Native shortcut conflict guard failed; holding playback paused");
+            log(LogLevel::Warn,"Native shortcut conflict guard failed; holding playback paused");
         }
         const auto state=session.snapshot(); session.submit({state.generation,Action::Pause});
     }
@@ -453,8 +467,8 @@ char __fastcall play_state_hook(Ptr world) {
         GameBackend backend(world);
         const bool was_gauge_returning=session.snapshot().gauge_returning;
         if(session.intercept_gauge_failure(position(field<Ptr>(world,216)),backend)) {
-            if(!was_gauge_returning)
-                log("Gauge failure interception at "+std::to_string(position(field<Ptr>(world,216)))+" seconds");
+            if (!was_gauge_returning && debug_enabled())
+                debug_log("Gauge failure intercepted; position=%.3f",position(field<Ptr>(world,216)));
             return 0;
         }
         if(session.intercept_track_end(position(field<Ptr>(world,216)),backend)) return 0;
@@ -464,7 +478,7 @@ char __fastcall play_state_hook(Ptr world) {
 }
 void __fastcall hud_event_hook(Ptr hud,Ptr events) {
     original_hud_event(hud,events);
-    if(!gauge_control.after_events(hud,events)) log("Gauge HUD refresh failed");
+    if(!gauge_control.after_events(hud,events)) log(LogLevel::Warn,"Gauge HUD refresh failed");
 }
 bool suppress_posteffect_update(Ptr world) {
     if (!world || world!=current_world) return false;
@@ -507,7 +521,7 @@ void __fastcall camera_update_hook(Ptr updater) {
     // lane/cursor/bomb views. Lock here before those views generate vertices.
     if (!camera_control.after_update(world,locked) && !camera_reported) {
         camera_reported=true; session.camera_unavailable();
-        log("Camera pose capture failed; camera control disabled for this track");
+        log(LogLevel::Warn,"Camera pose capture failed; camera control disabled for this track");
     }
 }
 Ptr __fastcall world_draw_hook(Ptr world) {
@@ -536,7 +550,7 @@ Ptr __fastcall cursor_event_hook(Ptr view,Ptr events) {
         const auto result=cursor_control.dispatch(original_cursor_event,view,events,locked,cursor_vtable);
         if(borrowed && !camera_control.after_cursor_event(world) && !camera_reported) {
             camera_reported=true; session.camera_unavailable();
-            log("Camera pose restore after cursor event failed; camera control disabled");
+            log(LogLevel::Warn,"Camera pose restore after cursor event failed; camera control disabled");
         }
         return result;
     } catch(...) {
@@ -554,7 +568,7 @@ struct VisualScope {
     }
     ~VisualScope() {
         if(borrowed && !visual_control.end(lease)) {
-            try { log("Visual camera input restore failed"); } catch(...) {}
+            log(LogLevel::Warn,"Visual camera input restore failed");
         }
     }
 };
@@ -622,8 +636,8 @@ void __fastcall timer_update_hook(Ptr timer) {
     stop_for_native_finish(world);
     if (reverse_asset && !reverse_reported && reverse_asset->finished.load(std::memory_order_acquire)) {
         const auto clip=reverse_asset->clip.load();
-        log(clip?"Reverse audio ready: "+std::to_string(clip->duration())+" seconds":
-                 "Reverse audio unavailable: "+reverse_asset->error);
+        if (clip) debug_log("Reverse audio decoded; duration=%.3f seconds",clip->duration());
+        else debug_log("Reverse audio decode failed; error=%s",reverse_asset->error.c_str());
         reverse_reported=true;
     }
     const auto state=session.snapshot();
@@ -645,9 +659,9 @@ void __fastcall timer_update_hook(Ptr timer) {
     if(read_game_input(input_device_slot,input)) {
         const auto event=game_shortcuts.poll(session,input,GetTickCount64());
         if(event==GameShortcutEvent::TogglePlayback)
-            log("Game shortcut: toggle playback at "+std::to_string(cursor)+" seconds");
+            debug_log("Game shortcut: toggle playback at %.3f seconds",cursor);
         else if(event==GameShortcutEvent::ReturnToStart)
-            log("Game shortcut: held combination, animated return to start at "+std::to_string(cursor)+" seconds");
+            debug_log("Game shortcut: held combination, animated return to start at %.3f seconds",cursor);
     } else game_shortcuts.reset();
     session.tick(cursor,field<std::uint8_t>(timer,16)==0,backend,static_cast<float>(elapsed));
     const auto after=session.snapshot();
@@ -677,16 +691,16 @@ bool __fastcall request_next_hook(Ptr scene,Ptr argument) {
     const auto table=field<Ptr>(scene,0);
     if (table==image+native::addresses().music_select_vtable) {
         music_select_route=capture_music_select_route(scene);
-        log("Captured music-select route: scene="+std::to_string(music_select_route.process_id)+
-            " next="+std::to_string(music_select_route.next_id)+" parent="+std::to_string(music_select_route.parent_id));
+        debug_log("Captured music-select route; scene=%d next=%d parent=%d layer=%d valid=%d",
+            music_select_route.process_id,music_select_route.next_id,music_select_route.parent_id,music_select_route.layer,music_select_route.valid());
     }
     if (table==image+native::addresses().alternative_scene_vtable) {
         const auto world=field<Ptr>(scene,416);
         if(world && is_tainted(world) && session.native_exit_locked()) return false;
         if (world && is_tainted(world) && music_select_route.valid()) {
             const bool accepted=request_music_select(scene,music_select_route,original_request_next);
-            log(accepted?"Practice exit: native parent-flow request accepted; result scene skipped":
-                         "Practice exit: native parent-flow request rejected; result remains blocked");
+            if (accepted) log(LogLevel::Debug,"Practice exit: native parent-flow request accepted; result scene skipped");
+            else log(LogLevel::Warn,"Could not return to song selection; practice results remain blocked");
             return accepted;
         }
     }
@@ -697,22 +711,22 @@ bool __fastcall collect_hook(Ptr world) {
         if(session.native_exit_locked()) { session.result_blocked(); return false; }
         if (!consumed_worlds.contains(world)) {
             const auto data=native::stage_result(image);
-            if (!data) { log("Practice result object unavailable; score collection remains blocked"); return false; }
+            if (!data) { log(LogLevel::Warn,"Practice result object unavailable; score collection remains blocked"); return false; }
             alignas(16) std::array<std::byte,236> options{};
             fn<Ptr(__fastcall*)(Ptr,Ptr)>(native::addresses().track_options)(reinterpret_cast<Ptr>(options.data()),world+native::world_layout().music);
             PracticeStageRecord record(static_cast<unsigned>(field<int>(data,32)),field<unsigned>(world,native::world_layout().music),
                                        field<unsigned>(world,native::world_layout().music+4),options);
             if (!append_practice_stage(image,data,record)) {
-                log("Practice stage bookkeeping failed; score collection remains blocked");
+                log(LogLevel::Warn,"Practice stage bookkeeping failed; score collection remains blocked");
                 return false;
             }
             if (!remember_practice_selection(image,world))
-                log("Practice selection memory unavailable; score collection remains blocked");
+                log(LogLevel::Warn,"Practice selection memory unavailable; score collection remains blocked");
             consumed_worlds.insert(world);
-            log("Practice consumed stage "+std::to_string(field<int>(data,32))+"; no scored result collected");
+            if (debug_enabled()) debug_log("Practice consumed stage %d; no scored result collected",field<int>(data,32));
         }
         session.result_blocked();
-        log("Practice score/stat/reward collection blocked; bookkeeping excluded from upload");
+        log(LogLevel::Debug,"Practice score/stat/reward collection blocked; bookkeeping excluded from upload");
         return false;
     }
     return original_collect(world);
@@ -771,8 +785,8 @@ std::uint32_t __fastcall feed_hook(Ptr feeder,void* out,std::uint32_t size) {
 Session& game_session() { return session; }
 bool install_game_hooks(HMODULE module,std::string& reason) {
     if (!native::validate(module,reason)) return false;
-    log(reason);
-    for (const auto& detail:native::resolution().details) log("Native resolver: "+detail);
+    log(LogLevel::Debug,reason);
+    if (debug_enabled()) for (const auto& detail:native::resolution().details) debug_log("Native resolver: %s",detail.c_str());
     image=reinterpret_cast<Ptr>(module);
     wchar_t module_path[32768]{};
     if (const auto length=GetModuleFileNameW(module,module_path,static_cast<DWORD>(std::size(module_path)));
@@ -780,178 +794,185 @@ bool install_game_hooks(HMODULE module,std::string& reason) {
         std::string catalog_error;
         contents_root=std::filesystem::path(module_path).parent_path().parent_path();
         if (song_catalog.load(contents_root,catalog_error))
-            log("Song catalog loaded: "+std::to_string(song_catalog.size())+" songs");
-        else log("Song information unavailable: "+catalog_error);
-    }
+            debug_log("Song catalog loaded; songs=%zu",song_catalog.size());
+        else debug_log("Song information unavailable; error=%s",catalog_error.c_str());
+    } else debug_log("Could not resolve the game module path; Windows error=%lu",GetLastError());
     const auto discovered=autoplay_discovery::resolve(module);
     song_visuals_ready=discovered && discovered.layout.draw && static_cast<bool>(discovered.layout.song_visuals);
     if(discovered && (song_visuals_ready || discovered.layout.song_visuals.can_reset())) song_visual_control.configure(discovered.layout.song_visuals);
-    else log("Song visual control unavailable: presentation layout not verified");
+    else log(LogLevel::Debug,"Song visual control unavailable: presentation layout not verified");
     const auto& a=native::addresses();
     song_animation_ready=discovered && discovered.layout.song_visuals.can_reset() &&
         reinterpret_cast<Ptr>(discovered.layout.song_visuals.post_event)==image+a.posteffect_event;
-    if(!song_animation_ready) log("Song animation reset unavailable: event ABI not verified");
+    if(!song_animation_ready) log(LogLevel::Debug,"Song animation reset unavailable: event ABI not verified");
     camera_control.configure({image+a.world_vtable,image+a.renderer_vtable,image+a.camera_engine_vtable,
         image+a.camera_world_vtable,image+a.camera_space_vtable,
         fn<camera::Rebuild>(a.camera_rebuild_space),fn<camera::SetView>(a.camera_set_view),native::world_layout(),native::resolution().camera});
-    log("Camera pose control located; native animations continue behind the locked view");
+    log(LogLevel::Debug,"Camera pose control located; native animations continue behind the locked view");
     lane_control.configure({image+a.world_vtable,image+a.game_context_vtable,image+a.fumen_player_vtable,
         image+a.draw_timer_vtable,image+a.fumen_data_vtable,image+a.lane_range_vtable,
         fn<lane_speed::Build>(a.lane_build_notes),fn<lane_speed::Load>(a.lane_load_notes),fn<lane_speed::Destroy>(a.lane_destroy_notes),native::world_layout()});
-    log("Lane Speed display timing and native note rebuild located");
+    log(LogLevel::Debug,"Lane Speed display timing and native note rebuild located");
     gauge_control.configure({image+a.world_vtable,image+a.fumen_player_vtable,image+a.fumen_data_vtable,image+a.gauge_ref_vtable,
         fn<gauge::Allocate>(a.gauge_allocate),fn<gauge::Push>(a.gauge_type_push),fn<gauge::Build>(a.gauge_build_stack),
         fn<gauge::Destroy>(a.gauge_destroy_player),fn<gauge::Destroy>(a.gauge_destroy_types),
         a.gauge_chart_options?fn<gauge::Options>(a.gauge_chart_options):nullptr,
         fn<gauge::Refresh>(a.gauge_hud_refresh),fn<gauge::Failed>(a.gauge_failed),
         native::world_layout(),native::resolution().chart_gauge_gain});
-    log("Native Gauge switching and ARS stacks located");
+    log(LogLevel::Debug,"Native Gauge switching and ARS stacks located");
     autoplay_ready=discovered && discovered.layout.note_gate && discovered.layout.update==image+a.world_update &&
         discovered.layout.world_vtable==image+a.world_vtable && discovered.layout.timer_vtable==image+a.game_timer_vtable;
     input_device_slot=discovered && discovered.layout.update==image+a.world_update?discovered.layout.input_device_slot:0;
     input_check_vtable=input_device_slot?discovered.layout.input_check_vtable:0;
-    if(!input_device_slot) log("Game shortcuts unavailable: native input ABI not verified");
+    if(!input_device_slot) log(LogLevel::Debug,"Game shortcuts unavailable: native input ABI not verified");
     if (autoplay_ready) {
         autoplay::configure(discovered.layout);
-        log("Native AutoPlay located; AutoJudge RVA="+std::to_string(discovered.layout.judge-image));
-    } else log(std::string("Native AutoPlay unavailable; training remains available: ")+
-               (discovered?"resolver disagrees with training world/timer":discovered.error));
+        debug_log("Native AutoPlay located; AutoJudge RVA=0x%llX",static_cast<unsigned long long>(discovered.layout.judge-image));
+    } else debug_log("Native AutoPlay unavailable; %s",discovered?"resolver disagrees with training world/timer":discovered.error);
     nemsys_vtable=autoplay_ready?discovered.layout.nemsys_vtable:0;
     if(!nemsys_vtable || !discovered.layout.nemsys_transform)
-        log("NEMSYS camera-follow control unavailable for this version");
+        log(LogLevel::Debug,"NEMSYS camera-follow control unavailable for this version");
     judge_line_vtable=autoplay_ready?discovered.layout.judge_line_vtable:0;
     if(!judge_line_vtable || !discovered.layout.judge_line_update)
-        log("Judge line camera-follow control unavailable for this version");
+        log(LogLevel::Debug,"Judge line camera-follow control unavailable for this version");
     cursor_vtable=autoplay_ready?discovered.layout.cursor_vtable:0;
     if(!cursor_vtable || !discovered.layout.cursor_event)
-        log("Cursor effect camera-follow control unavailable for this version");
+        log(LogLevel::Debug,"Cursor effect camera-follow control unavailable for this version");
     button_bomb_vtable=autoplay_ready?discovered.layout.button_bomb_vtable:0;
     knob_bomb_vtable=autoplay_ready?discovered.layout.knob_bomb_vtable:0;
     knob_bomb_primary_vtable=autoplay_ready?discovered.layout.knob_bomb_primary_vtable:0;
     if(!discovered.layout.nemsys_update || !button_bomb_vtable || !knob_bomb_vtable || !knob_bomb_primary_vtable)
-        log("Some gameplay visual camera-follow controls are unavailable for this version");
+        log(LogLevel::Debug,"Some gameplay visual camera-follow controls are unavailable for this version");
     judgment_color_option=autoplay_ready?discovered.layout.judgment_color_option:0;
     s_critical_flag=autoplay_ready && discovered.layout.s_critical_flag+4==native::world_layout().gauge_types?
         discovered.layout.s_critical_flag:0;
-    if(!s_critical_flag) log("S-CRITICAL gameplay option unavailable; using seven-column counter");
-    if(!judgment_color_option) log("EARLY/LATE color option unavailable; using default colors");
+    if(!s_critical_flag) log(LogLevel::Debug,"S-CRITICAL gameplay option unavailable; using seven-column counter");
+    if(!judgment_color_option) log(LogLevel::Debug,"EARLY/LATE color option unavailable; using default colors");
     const bool judgment_ready=autoplay_ready && discovered.layout.judgment_event &&
         discovered.layout.judgment_gauge==image+a.gauge_update;
     judgment::set_available(judgment_ready);
-    if (!judgment_ready) log("Judgment counter unavailable: callback ABI not verified");
+    if (!judgment_ready) log(LogLevel::Debug,"Judgment counter unavailable: callback ABI not verified");
     QueryPerformanceFrequency(&frequency);
-    struct Hook { Ptr rva; void* detour; void** original; };
+    struct Hook { const char* name; Ptr rva; void* detour; void** original; };
     std::vector<Hook> hooks{
-        {native::addresses().serialize_result,reinterpret_cast<void*>(serialize_hook),reinterpret_cast<void**>(&original_serialize)},
-        {native::addresses().can_continue,reinterpret_cast<void*>(continue_hook),reinterpret_cast<void**>(&original_continue)},
-        {native::addresses().flow_decision,reinterpret_cast<void*>(flow_hook),reinterpret_cast<void**>(&original_flow)},
-        {native::addresses().collect_result,reinterpret_cast<void*>(collect_hook),reinterpret_cast<void**>(&original_collect)},
-        {native::addresses().world_destroy,reinterpret_cast<void*>(destroy_hook),reinterpret_cast<void**>(&original_destroy)},
-        {native::addresses().timer_update,reinterpret_cast<void*>(timer_update_hook),reinterpret_cast<void**>(&original_timer_update)},
-        {native::addresses().audio_feed,reinterpret_cast<void*>(feed_hook),reinterpret_cast<void**>(&original_feed)},
-        {native::addresses().request_next,reinterpret_cast<void*>(request_next_hook),reinterpret_cast<void**>(&original_request_next)},
-        {native::addresses().camera_update,reinterpret_cast<void*>(camera_update_hook),reinterpret_cast<void**>(&original_camera_update)},
-        {a.posteffect_event,reinterpret_cast<void*>(posteffect_event_hook),reinterpret_cast<void**>(&original_posteffect_event)},
-        {a.posteffect_shake,reinterpret_cast<void*>(posteffect_shake_hook),reinterpret_cast<void**>(&original_posteffect_shake)},
-        {a.lane_timing_constructor,reinterpret_cast<void*>(timing_constructor_hook),reinterpret_cast<void**>(&original_timing_constructor)},
-        {a.hisp_update,reinterpret_cast<void*>(hisp_update_hook),reinterpret_cast<void**>(&original_hisp_update)},
-        {a.play_state,reinterpret_cast<void*>(play_state_hook),reinterpret_cast<void**>(&original_play_state)},
-        {a.gauge_hud_event,reinterpret_cast<void*>(hud_event_hook),reinterpret_cast<void**>(&original_hud_event)},
-        {a.hisp_event,reinterpret_cast<void*>(hisp_event_hook),reinterpret_cast<void**>(&original_hisp_event)},
-        {native::addresses().world_update,reinterpret_cast<void*>(world_update_hook),reinterpret_cast<void**>(&original_world_update)}
+        {"serialize",native::addresses().serialize_result,reinterpret_cast<void*>(serialize_hook),reinterpret_cast<void**>(&original_serialize)},
+        {"continue",native::addresses().can_continue,reinterpret_cast<void*>(continue_hook),reinterpret_cast<void**>(&original_continue)},
+        {"flow",native::addresses().flow_decision,reinterpret_cast<void*>(flow_hook),reinterpret_cast<void**>(&original_flow)},
+        {"collect",native::addresses().collect_result,reinterpret_cast<void*>(collect_hook),reinterpret_cast<void**>(&original_collect)},
+        {"destroy",native::addresses().world_destroy,reinterpret_cast<void*>(destroy_hook),reinterpret_cast<void**>(&original_destroy)},
+        {"timer_update",native::addresses().timer_update,reinterpret_cast<void*>(timer_update_hook),reinterpret_cast<void**>(&original_timer_update)},
+        {"feed",native::addresses().audio_feed,reinterpret_cast<void*>(feed_hook),reinterpret_cast<void**>(&original_feed)},
+        {"request_next",native::addresses().request_next,reinterpret_cast<void*>(request_next_hook),reinterpret_cast<void**>(&original_request_next)},
+        {"camera_update",native::addresses().camera_update,reinterpret_cast<void*>(camera_update_hook),reinterpret_cast<void**>(&original_camera_update)},
+        {"posteffect_event",a.posteffect_event,reinterpret_cast<void*>(posteffect_event_hook),reinterpret_cast<void**>(&original_posteffect_event)},
+        {"posteffect_shake",a.posteffect_shake,reinterpret_cast<void*>(posteffect_shake_hook),reinterpret_cast<void**>(&original_posteffect_shake)},
+        {"timing_constructor",a.lane_timing_constructor,reinterpret_cast<void*>(timing_constructor_hook),reinterpret_cast<void**>(&original_timing_constructor)},
+        {"hisp_update",a.hisp_update,reinterpret_cast<void*>(hisp_update_hook),reinterpret_cast<void**>(&original_hisp_update)},
+        {"play_state",a.play_state,reinterpret_cast<void*>(play_state_hook),reinterpret_cast<void**>(&original_play_state)},
+        {"hud_event",a.gauge_hud_event,reinterpret_cast<void*>(hud_event_hook),reinterpret_cast<void**>(&original_hud_event)},
+        {"hisp_event",a.hisp_event,reinterpret_cast<void*>(hisp_event_hook),reinterpret_cast<void**>(&original_hisp_event)},
+        {"world_update",native::addresses().world_update,reinterpret_cast<void*>(world_update_hook),reinterpret_cast<void**>(&original_world_update)}
     };
     if(input_device_slot)
-        hooks.push_back({discovered.layout.input_check_update-image,reinterpret_cast<void*>(input_check_update_hook),
+        hooks.push_back({"input_check_update",discovered.layout.input_check_update-image,reinterpret_cast<void*>(input_check_update_hook),
             reinterpret_cast<void**>(&original_input_check_update)});
     if(autoplay_ready && discovered.layout.draw)
-        hooks.push_back({discovered.layout.draw-image,reinterpret_cast<void*>(world_draw_hook),reinterpret_cast<void**>(&original_world_draw)});
-    else log("Gameplay draw context unavailable; cursor camera-follow control may be incomplete");
+        hooks.push_back({"world_draw",discovered.layout.draw-image,reinterpret_cast<void*>(world_draw_hook),reinterpret_cast<void**>(&original_world_draw)});
+    else log(LogLevel::Debug,"Gameplay draw context unavailable; cursor camera-follow control may be incomplete");
     if(nemsys_vtable && discovered.layout.nemsys_transform)
-        hooks.push_back({discovered.layout.nemsys_transform-image,reinterpret_cast<void*>(nemsys_transform_hook),
+        hooks.push_back({"nemsys_transform",discovered.layout.nemsys_transform-image,reinterpret_cast<void*>(nemsys_transform_hook),
             reinterpret_cast<void**>(&original_nemsys_transform)});
     if(judge_line_vtable && discovered.layout.judge_line_update)
-        hooks.push_back({discovered.layout.judge_line_update-image,reinterpret_cast<void*>(judge_line_update_hook),
+        hooks.push_back({"judge_line_update",discovered.layout.judge_line_update-image,reinterpret_cast<void*>(judge_line_update_hook),
             reinterpret_cast<void**>(&original_judge_line_update)});
     if(cursor_vtable && discovered.layout.cursor_event)
-        hooks.push_back({discovered.layout.cursor_event-image,reinterpret_cast<void*>(cursor_event_hook),
+        hooks.push_back({"cursor_event",discovered.layout.cursor_event-image,reinterpret_cast<void*>(cursor_event_hook),
             reinterpret_cast<void**>(&original_cursor_event)});
     if(nemsys_vtable && discovered.layout.nemsys_update)
-        hooks.push_back({discovered.layout.nemsys_update-image,reinterpret_cast<void*>(nemsys_update_hook),reinterpret_cast<void**>(&original_nemsys_update)});
+        hooks.push_back({"nemsys_update",discovered.layout.nemsys_update-image,reinterpret_cast<void*>(nemsys_update_hook),reinterpret_cast<void**>(&original_nemsys_update)});
     if(button_bomb_vtable && discovered.layout.button_bomb_update)
-        hooks.push_back({discovered.layout.button_bomb_update-image,reinterpret_cast<void*>(button_bomb_update_hook),reinterpret_cast<void**>(&original_button_bomb_update)});
+        hooks.push_back({"button_bomb_update",discovered.layout.button_bomb_update-image,reinterpret_cast<void*>(button_bomb_update_hook),reinterpret_cast<void**>(&original_button_bomb_update)});
     if(knob_bomb_primary_vtable && discovered.layout.knob_bomb_update)
-        hooks.push_back({discovered.layout.knob_bomb_update-image,reinterpret_cast<void*>(knob_bomb_update_hook),reinterpret_cast<void**>(&original_knob_bomb_update)});
+        hooks.push_back({"knob_bomb_update",discovered.layout.knob_bomb_update-image,reinterpret_cast<void*>(knob_bomb_update_hook),reinterpret_cast<void**>(&original_knob_bomb_update)});
     if(knob_bomb_vtable && discovered.layout.knob_bomb_event)
-        hooks.push_back({discovered.layout.knob_bomb_event-image,reinterpret_cast<void*>(knob_bomb_event_hook),reinterpret_cast<void**>(&original_knob_bomb_event)});
-    if (autoplay_ready) hooks.push_back({discovered.layout.judge-image,reinterpret_cast<void*>(judge_hook),reinterpret_cast<void**>(&original_judge)});
-    if (autoplay_ready) hooks.push_back({discovered.layout.note_gate-image,reinterpret_cast<void*>(note_gate_hook),reinterpret_cast<void**>(&original_note_gate)});
-    if (judgment_ready) hooks.push_back({discovered.layout.judgment_event-image,
+        hooks.push_back({"knob_bomb_event",discovered.layout.knob_bomb_event-image,reinterpret_cast<void*>(knob_bomb_event_hook),reinterpret_cast<void**>(&original_knob_bomb_event)});
+    if (autoplay_ready) hooks.push_back({"judge",discovered.layout.judge-image,reinterpret_cast<void*>(judge_hook),reinterpret_cast<void**>(&original_judge)});
+    if (autoplay_ready) hooks.push_back({"note_gate",discovered.layout.note_gate-image,reinterpret_cast<void*>(note_gate_hook),reinterpret_cast<void**>(&original_note_gate)});
+    if (judgment_ready) hooks.push_back({"judgment_event",discovered.layout.judgment_event-image,
         reinterpret_cast<void*>(judgment_event_hook),reinterpret_cast<void**>(&original_judgment_event)});
     if(song_visuals_ready) {
-        hooks.push_back({discovered.layout.song_visuals.ex_draw-image,reinterpret_cast<void*>(song_background_draw_hook),reinterpret_cast<void**>(&original_song_background_draw)});
-        hooks.push_back({discovered.layout.song_visuals.post_render-image,reinterpret_cast<void*>(song_post_render_hook),reinterpret_cast<void**>(&original_song_post_render)});
+        hooks.push_back({"song_background_draw",discovered.layout.song_visuals.ex_draw-image,reinterpret_cast<void*>(song_background_draw_hook),reinterpret_cast<void**>(&original_song_background_draw)});
+        hooks.push_back({"song_post_render",discovered.layout.song_visuals.post_render-image,reinterpret_cast<void*>(song_post_render_hook),reinterpret_cast<void**>(&original_song_post_render)});
     }
-    std::vector<void*> created;
+    std::vector<const Hook*> created;
+    debug_log("Installing game hooks; candidates=%zu",hooks.size());
     for (const auto& h:hooks) {
         auto* address=reinterpret_cast<void*>(image+h.rva);
         const auto status=MH_CreateHook(address,h.detour,h.original);
+        debug_log("Game hook %s; RVA=0x%llX create=%s",h.name,static_cast<unsigned long long>(h.rva),MH_StatusToString(status));
         if (status!=MH_OK) {
             if(discovered.layout.input_check_update && h.rva==discovered.layout.input_check_update-image) {
                 input_device_slot=input_check_vtable=0;
-                log(std::string("Game shortcuts disabled: native force-crash interception unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Game shortcuts disabled: native force-crash interception unavailable");
                 continue;
             }
             if(discovered.layout.song_visuals &&
                (h.rva==discovered.layout.song_visuals.ex_draw-image || h.rva==discovered.layout.song_visuals.post_render-image)) {
                 song_visuals_ready=false;
-                log(std::string("Song presentation hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Song presentation hook unavailable");
                 continue;
             }
             if(discovered.layout.draw && h.rva==discovered.layout.draw-image) {
-                log(std::string("Gameplay draw context hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Gameplay draw context hook unavailable");
                 continue;
             }
             if((nemsys_vtable && discovered.layout.nemsys_update && h.rva==discovered.layout.nemsys_update-image) ||
                (button_bomb_vtable && h.rva==discovered.layout.button_bomb_update-image) ||
                (knob_bomb_vtable && h.rva==discovered.layout.knob_bomb_event-image) ||
                (knob_bomb_primary_vtable && h.rva==discovered.layout.knob_bomb_update-image)) {
-                log(std::string("Gameplay visual camera-follow hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Gameplay visual camera-follow hook unavailable");
                 continue;
             }
             if(cursor_vtable && h.rva==discovered.layout.cursor_event-image) {
                 cursor_vtable=0;
-                log(std::string("Cursor effect camera-follow hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Cursor effect camera-follow hook unavailable");
                 continue;
             }
             if(judge_line_vtable && h.rva==discovered.layout.judge_line_update-image) {
                 judge_line_vtable=0;
-                log(std::string("Judge line camera-follow hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Judge line camera-follow hook unavailable");
                 continue;
             }
             if(nemsys_vtable && h.rva==discovered.layout.nemsys_transform-image) {
                 nemsys_vtable=0;
-                log(std::string("NEMSYS camera-follow hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"NEMSYS camera-follow hook unavailable");
                 continue;
             }
             if(judgment_ready && h.rva==discovered.layout.judgment_event-image) {
                 judgment::set_available(false);
-                log(std::string("Judgment counter hook unavailable: ")+MH_StatusToString(status));
+                log(LogLevel::Debug,"Judgment counter hook unavailable");
                 continue;
             }
-            for (auto* p:created) MH_RemoveHook(p);
+            for (const auto* hook:created) MH_RemoveHook(reinterpret_cast<void*>(image+hook->rva));
             reason=std::string("Hook creation failed: ")+MH_StatusToString(status); return false;
         }
-        created.push_back(address);
+        created.push_back(&h);
     }
-    for (auto* p:created) MH_QueueEnableHook(p);
+    for (const auto* hook:created) {
+        const auto queued=MH_QueueEnableHook(reinterpret_cast<void*>(image+hook->rva));
+        debug_log("Game hook %s; queue enable=%s",hook->name,MH_StatusToString(queued));
+    }
     const auto status=MH_ApplyQueued();
+    debug_log("Game hook activation; hooks=%zu apply=%s",created.size(),MH_StatusToString(status));
     if (status!=MH_OK) {
-        for (auto* p:created) { MH_DisableHook(p); MH_RemoveHook(p); }
+        for (const auto* hook:created) {
+            auto* address=reinterpret_cast<void*>(image+hook->rva);
+            MH_DisableHook(address); MH_RemoveHook(address);
+        }
         reason=std::string("Hook activation failed: ")+MH_StatusToString(status); return false;
     }
-    if(input_device_slot) log("Game shortcuts ready; native START + FX-L + FX-R force-crash request intercepted");
-    reason="Game hooks ready; configured hotkey opens overlay";
-    log(reason);
+    if(input_device_slot) log(LogLevel::Debug,"Game shortcuts ready");
+    reason="Game hooks ready";
     return true;
 }
 }

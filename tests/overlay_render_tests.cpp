@@ -427,7 +427,7 @@ int main(int argc,char** argv) {
             std::cout<<"Overlay hotkey: first-open, delayed messages, held keys, quick taps and polling-only scenarios passed\n";
             return 0;
         }
-        training::show_overlay(true); training::set_overlay_status("ready");
+        training::show_overlay(true); training::set_overlay_failed(false);
         ComPtr<IDirect3DSurface9> back;
         require(device->GetBackBuffer(0,0,D3DBACKBUFFER_TYPE_MONO,&back),"backbuffer missing");
         ComPtr<IDirect3DTexture9> texture; ComPtr<IDirect3DSurface9> offscreen;
