@@ -6,6 +6,7 @@
 #include <iomanip>
 #include <limits>
 #include <locale>
+#include <optional>
 #include <sstream>
 #include <string_view>
 
@@ -25,9 +26,32 @@ bool number(std::string_view text,float& value) {
     if(result.ec!=std::errc{} || result.ptr!=text.data()+text.size() || !std::isfinite(parsed) || parsed<0) return false;
     value=parsed; return true;
 }
+bool integer(std::string_view text,int& value,int minimum,int maximum) {
+    int parsed{};
+    const auto result=std::from_chars(text.data(),text.data()+text.size(),parsed);
+    if(result.ec!=std::errc{} || result.ptr!=text.data()+text.size() || parsed<minimum || parsed>maximum) return false;
+    value=parsed; return true;
+}
 bool boolean(std::string_view text,bool& value) {
     if(text!="0" && text!="1") return false;
     value=text=="1"; return true;
+}
+constexpr struct {
+    JudgmentCounterSize size;
+    std::string_view token;
+} judgment_counter_sizes[]{
+    {JudgmentCounterSize::Default,"default"},
+    {JudgmentCounterSize::Large,"big"},
+    {JudgmentCounterSize::ExtraLarge,"exbig"}
+};
+std::string_view counter_size_token(JudgmentCounterSize size) {
+    for(const auto& preset:judgment_counter_sizes) if(preset.size==size) return preset.token;
+    return {};
+}
+std::optional<JudgmentCounterSize> parse_counter_size(const std::string& text) {
+    const auto token=lower(text);
+    for(const auto& preset:judgment_counter_sizes) if(preset.token==token) return preset.size;
+    return std::nullopt;
 }
 std::string key_token(unsigned key) {
     if(key==VK_INSERT) return "Insert";
@@ -94,6 +118,8 @@ bool PreferencesStore::load(const std::filesystem::path& path,std::string& error
     if(!exists) return write(value_,error);
     std::ifstream input(path_,std::ios::binary);
     if(!input) { error="Cannot read trainingmaster.ini"; return false; }
+    std::optional<bool> counter_always_show;
+    std::optional<JudgmentCounterSize> counter_size;
     std::string line,section; bool first=true,ok=true;
     while(std::getline(input,line)) {
         if(first && line.starts_with("\xef\xbb\xbf")) line.erase(0,3);
@@ -110,7 +136,15 @@ bool PreferencesStore::load(const std::filesystem::path& path,std::string& error
         else if(section=="overlay" && key=="ctrl") field=boolean(text,value_.hotkey.ctrl);
         else if(section=="overlay" && key=="alt") field=boolean(text,value_.hotkey.alt);
         else if(section=="overlay" && key=="shift") field=boolean(text,value_.hotkey.shift);
-        else if(section=="overlay" && key=="alwaysshowjudgmentcounter") field=boolean(text,value_.always_show_judgment_counter);
+        else if(section=="overlay" && (key=="alwaysshowjudgmentcounter" || key=="alwaysshowjudgementcounter"))
+            field=boolean(text,value_.always_show_judgment_counter);
+        else if(section=="overlay" && (key=="judgmentcounterfontpercent" || key=="judgementcounterfontpercent")) {
+            int percent{};
+            field=integer(text,percent,50,200);
+            // Map settings from the former slider to the nearest preset.
+            if(field) value_.judgment_counter_size=percent<125?JudgmentCounterSize::Default:
+                percent<175?JudgmentCounterSize::Large:JudgmentCounterSize::ExtraLarge;
+        }
         else if(section=="overlay" && key=="language") {
             const auto language=lower(text);
             field=language=="en" || language=="zh-cn";
@@ -121,15 +155,26 @@ bool PreferencesStore::load(const std::filesystem::path& path,std::string& error
             field=number(text,opacity) && opacity<=1;
             if(field) value_.background_opacity=opacity;
         }
-        else if(section=="chartview" && key=="defaultcolumnmeasures") {
-            unsigned measures{};
-            const auto result=std::from_chars(text.data(),text.data()+text.size(),measures);
-            field=result.ec==std::errc{} && result.ptr==text.data()+text.size() && measures>=1 && measures<=12;
-            if(field) value_.chart_column_measures=static_cast<int>(measures);
+        else if(section=="judgementcounter" && key=="alwaysshow") {
+            const auto token=lower(text);
+            if(token=="true" || token=="false") counter_always_show=token=="true";
+            else {
+                bool always_show{};
+                field=boolean(token,always_show);
+                if(field) counter_always_show=always_show;
+            }
         }
+        else if(section=="judgementcounter" && key=="size") {
+            const auto size=parse_counter_size(text);
+            field=size.has_value();
+            if(field) counter_size=size;
+        }
+        else if(section=="chartview" && key=="defaultcolumnmeasures") field=integer(text,value_.chart_column_measures,1,12);
         else if(section=="chartview" && key=="followplayback") field=boolean(text,value_.follow_playback);
         if(!field) { ok=false; error="Invalid INI setting: "+section+"."+key+" (using default/previous valid value)"; }
     }
+    value_.always_show_judgment_counter=counter_always_show.value_or(value_.always_show_judgment_counter);
+    value_.judgment_counter_size=counter_size.value_or(value_.judgment_counter_size);
     if(input.bad()) { error="Cannot finish reading trainingmaster.ini"; return false; }
     return ok;
 }
@@ -146,7 +191,8 @@ bool PreferencesStore::write(const Preferences& value,std::string& error) {
            <<key_token(value.hotkey.key)<<"\nCtrl="<<value.hotkey.ctrl<<"\nAlt="<<value.hotkey.alt<<"\nShift="<<value.hotkey.shift
            <<"\nLanguage="<<(value.language==i18n::Language::Chinese?"zh-CN":"en")
            <<"\nBackgroundOpacity="<<value.background_opacity
-           <<"\nAlwaysShowJudgmentCounter="<<value.always_show_judgment_counter
+           <<"\n\n[JudgementCounter]\nAlwaysShow="<<(value.always_show_judgment_counter?"true":"false")
+           <<"\nSize="<<counter_size_token(value.judgment_counter_size)
            <<"\n\n[ChartView]\nDefaultColumnMeasures="<<value.chart_column_measures
            <<"\nFollowPlayback="<<value.follow_playback<<'\n';
         out.flush();
@@ -161,6 +207,10 @@ bool PreferencesStore::write(const Preferences& value,std::string& error) {
 bool PreferencesStore::save(const Preferences& value,std::string& error) {
     std::lock_guard lock(mutex_); error.clear();
     if(!valid(value)) { error="Buffers must be non-negative, opacity must be 0-1, column count must be 1-12 measures; choose a valid keyboard key"; return false; }
+    if(counter_size_token(value.judgment_counter_size).empty()) {
+        error="Invalid judgment counter size";
+        return false;
+    }
     if(!write(value,error)) return false;
     value_=value; return true;
 }

@@ -19,12 +19,13 @@ int main() {
         PreferencesStore store; std::string error;
         check(store.load(path,error),"missing INI must create defaults beside requested path");
         check(store.snapshot()==Preferences{},"defaults are 1 second on each side and Insert");
-        check(!store.snapshot().always_show_judgment_counter && read(path).find("AlwaysShowJudgmentCounter=0")!=std::string::npos,
-              "judgment counter must default to overlay-only and write its preference");
+        check(read(path).find("\n[JudgementCounter]\nAlwaysShow=false\nSize=default\n")!=std::string::npos,
+              "judgment counter defaults must be written in their own INI section");
         check(store.snapshot().background_opacity==.90f,"default background opacity must be 90 percent");
         check(read(path).find("StartBufferSeconds=1")!=std::string::npos && read(path).find("EndBufferSeconds=1")!=std::string::npos,"defaults must be written");
         auto changed=store.snapshot(); changed.loop_before=0; changed.loop_after=2.75f;
         changed.background_opacity=.37f; changed.chart_column_measures=7; changed.follow_playback=false; changed.always_show_judgment_counter=true; changed.language=i18n::Language::Chinese;
+        changed.judgment_counter_size=JudgmentCounterSize::Large;
         changed.hotkey={VK_F9,true,false,true};
         check(store.save(changed,error),"changed preferences must persist");
         PreferencesStore restarted;
@@ -36,7 +37,11 @@ int main() {
         }
         auto bad_language=changed; bad_language.language=static_cast<i18n::Language>(99);
         check(!store.save(bad_language,error) && store.snapshot()==changed && read(path)==bytes,"unsupported language must not alter preferences");
-        check(read(path).find("AlwaysShowJudgmentCounter=1")!=std::string::npos,"counter visibility preference must persist");
+        check(bytes.find("\n[JudgementCounter]\nAlwaysShow=true\nSize=big\n")!=std::string::npos,
+              "counter visibility and the big preset must persist in the new section");
+        auto bad_size=changed; bad_size.judgment_counter_size=static_cast<JudgmentCounterSize>(160);
+        check(!store.save(bad_size,error) && store.snapshot()==changed && read(path)==bytes,
+              "unsupported counter presets must preserve preferences");
         check(read(path).find("Language=zh-CN")!=std::string::npos,"Chinese language must persist as zh-CN");
         auto bad=changed; bad.hotkey.key=VK_LBUTTON;
         check(!store.save(bad,error) && store.snapshot()==changed,"mouse buttons cannot become keyboard shortcuts");
@@ -60,7 +65,7 @@ int main() {
         check(!saved && !error.empty() && store.snapshot()==changed && read(path)==bytes,"failed write must retain old file and active values");
         {
             std::ofstream out(path,std::ios::binary|std::ios::trunc);
-            out<<"\xef\xbb\xbf[Loop]\nStartBufferSeconds=-5\nEndBufferSeconds=nan\n[Overlay]\nToggleKey=0x01\nLanguage=invalid\nCtrl=2\nBackgroundOpacity=1.1\nAlwaysShowJudgmentCounter=2\n[ChartView]\nDefaultColumnMeasures=13\nFollowPlayback=2\n";
+            out<<"\xef\xbb\xbf[Loop]\nStartBufferSeconds=-5\nEndBufferSeconds=nan\n[Overlay]\nToggleKey=0x01\nLanguage=invalid\nCtrl=2\nBackgroundOpacity=1.1\n[JudgementCounter]\nAlwaysShow=2\nSize=invalid\n[ChartView]\nDefaultColumnMeasures=13\nFollowPlayback=2\n";
         }
         PreferencesStore malformed;
         check(!malformed.load(path,error) && malformed.snapshot()==Preferences{},"malformed known values must fall back safely");
@@ -71,6 +76,35 @@ int main() {
         check(malformed.load(path,error) && malformed.snapshot().hotkey==OverlayHotkey{VK_F12,true,true,false} &&
               malformed.snapshot().loop_before==1.25f && malformed.snapshot().loop_after==0 && malformed.snapshot().background_opacity==.90f && malformed.snapshot().chart_column_measures==4 && malformed.snapshot().follow_playback && !malformed.snapshot().always_show_judgment_counter && malformed.snapshot().language==i18n::Language::English,
               "legacy INI must preserve its keys and ignore the obsolete seconds unit, defaulting to 4 measures");
+        check(malformed.snapshot().judgment_counter_size==JudgmentCounterSize::Default,"legacy INI must use the default counter size");
+        {
+            std::ofstream out(path,std::ios::trunc); out<<"[Overlay]\nAlwaysShowJudgmentCounter=1\nJudgmentCounterFontPercent=180\n";
+        }
+        check(malformed.load(path,error) && malformed.snapshot().always_show_judgment_counter &&
+              malformed.snapshot().judgment_counter_size==JudgmentCounterSize::ExtraLarge,
+              "legacy overlay keys must preserve visibility and map to the nearest size preset");
+        check(malformed.save(malformed.snapshot(),error),"legacy counter preferences must save in the new format");
+        const auto migrated=read(path);
+        check(migrated.find("\n[JudgementCounter]\nAlwaysShow=true\nSize=exbig\n")!=std::string::npos &&
+              migrated.find("AlwaysShowJudgmentCounter=")==std::string::npos && migrated.find("JudgmentCounterFontPercent=")==std::string::npos,
+              "saving a legacy config must replace both old keys");
+        {
+            std::ofstream out(path,std::ios::trunc);
+            out<<"[JudgementCounter]\nAlwaysShow=False\nSize=BIG\n[Overlay]\nAlwaysShowJudgementCounter=1\nJudgementCounterFontPercent=200\n";
+        }
+        check(malformed.load(path,error) && !malformed.snapshot().always_show_judgment_counter &&
+              malformed.snapshot().judgment_counter_size==JudgmentCounterSize::Large,
+              "the new counter keys must take precedence over later legacy keys and accept case-insensitive values");
+        for(int enabled:{0,1}) {
+            { std::ofstream out(path,std::ios::trunc); out<<"[JudgementCounter]\nAlwaysShow="<<enabled<<'\n'; }
+            check(malformed.load(path,error) && malformed.snapshot().always_show_judgment_counter==(enabled==1),
+                  "numeric AlwaysShow values from older configs must still load");
+        }
+        for(const char* invalid:{"49","201","125.5"}) {
+            { std::ofstream out(path,std::ios::trunc); out<<"[Overlay]\nJudgmentCounterFontPercent="<<invalid<<'\n'; }
+            check(!malformed.load(path,error) && malformed.snapshot().judgment_counter_size==JudgmentCounterSize::Default,
+                  "invalid counter sizes must fall back to the default preset");
+        }
         for(const char* invalid:{"1.5","nan","0","13"}) {
             { std::ofstream out(path,std::ios::trunc); out<<"[ChartView]\nDefaultColumnMeasures="<<invalid<<'\n'; }
             check(!malformed.load(path,error) && malformed.snapshot().chart_column_measures==4,"invalid or fractional bar counts must fall back to 4");

@@ -173,6 +173,37 @@ int main() {
         counter_preferences.always_show_judgment_counter=false;
         check(training::preferences().save(counter_preferences,config_error),"counter visibility fixture must restore default");
         training::show_overlay(true);
+        render_counter(session);
+        const auto original_counter_pos=initial_counter->Pos;
+        const auto original_counter_size=initial_counter->Size;
+        const ImVec2 grip{initial_counter->Pos.x+original_counter_size.x-4.f,initial_counter->Pos.y+original_counter_size.y-4.f};
+        io.AddMousePosEvent(grip.x,grip.y); render_counter(session);
+        io.AddMouseButtonEvent(0,true); render_counter(session);
+        io.AddMousePosEvent(grip.x+120.f,grip.y+48.f); render_counter(session);
+        io.AddMouseButtonEvent(0,false); render_counter(session);
+        check(initial_counter->Size.x==original_counter_size.x && initial_counter->Size.y==original_counter_size.y,
+              "dragging a corner must preserve the counter's preset dimensions");
+        ImGui::SetWindowPos("##judgment-counter",original_counter_pos);
+        io.AddMousePosEvent(-100.f,-100.f);
+        const float default_counter_font=initial_counter->FontRefSize;
+        const float panel_font=initial_panel->FontRefSize;
+        counter_preferences.judgment_counter_size=training::JudgmentCounterSize::Large;
+        check(training::preferences().save(counter_preferences,config_error),"large counter preset must save");
+        render_counter(session);
+        const auto large_size=initial_counter->Size;
+        const float large_font=initial_counter->FontRefSize;
+        check(large_font>default_counter_font && large_size.x>original_counter_size.x && large_size.y>original_counter_size.y,
+              "the large preset must grow the counter and its text");
+        counter_preferences.judgment_counter_size=training::JudgmentCounterSize::ExtraLarge;
+        check(training::preferences().save(counter_preferences,config_error),"extra large counter preset must save");
+        render_counter(session); render(session);
+        check(initial_counter->FontRefSize>large_font && initial_counter->Size.x>large_size.x && initial_counter->Size.y>large_size.y &&
+              initial_panel->FontRefSize==panel_font,"the extra large preset must scale only the counter");
+        counter_preferences.judgment_counter_size=training::JudgmentCounterSize::Default;
+        check(training::preferences().save(counter_preferences,config_error),"counter preset must restore default");
+        render_counter(session);
+        check(initial_counter->Size.x==original_counter_size.x && initial_counter->Size.y==original_counter_size.y,
+              "selecting the default preset must restore the original counter size");
         check(playing.find("Setting")!=std::string::npos && playing.find("AutoPlay")!=std::string::npos &&
               playing.find("AutoPlay diagnostics")==std::string::npos && playing.find("Block camera movement")!=std::string::npos,
               "Setting must expose AutoPlay and camera controls by default");
@@ -296,6 +327,14 @@ int main() {
         ImGui::ActivateItemByID(options->GetID(training::i18n::label("Follow playback"))); render(session);
         check(training::preferences().snapshot().follow_playback,"Option must also reenable following");
         check(option.find("Always show judgment counter")!=std::string::npos,"Option must expose judgment counter visibility");
+        for(const char* label:{"Size","Default","Large","Extra large"})
+            check(option.find(label)!=std::string::npos,"Option must display the three counter size presets");
+        ImGui::ActivateItemByID(options->GetID(training::i18n::label("Extra large"))); render(session);
+        check(restarted.load(config,config_error) && restarted.snapshot().judgment_counter_size==training::JudgmentCounterSize::ExtraLarge,
+              "selecting a counter size preset from Option must persist it");
+        ImGui::ActivateItemByID(options->GetID(training::i18n::label("Default"))); render(session);
+        check(training::preferences().snapshot().judgment_counter_size==training::JudgmentCounterSize::Default,
+              "Option must restore the default counter size");
         ImGui::ActivateItemByID(options->GetID(training::i18n::label("Always show judgment counter"))); render(session);
         check(training::preferences().snapshot().always_show_judgment_counter && restarted.load(config,config_error) && restarted.snapshot().always_show_judgment_counter,
               "Option counter switch must save immediately and survive reload");
@@ -312,7 +351,7 @@ int main() {
               restarted.load(config,config_error) && restarted.snapshot().language==training::i18n::Language::Chinese,
               "selecting Chinese must save immediately and survive reload");
         const auto chinese=render(session);
-        for(const char* expected:{"训练大师","选项","语言","默认每列小节数","播放控制","立即结束","曲目 ID"})
+        for(const char* expected:{"训练大师","选项","语言","大小","超大","默认每列小节数","播放控制","立即结束","曲目 ID"})
             check(chinese.find(expected)!=std::string::npos,"Chinese UI must translate menu, options, controls and metadata labels");
         check(ImGui::FindWindowByName("###Training Master")==panel,
               "Chinese title must retain the main window identity");

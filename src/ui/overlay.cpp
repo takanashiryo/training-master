@@ -682,6 +682,17 @@ void draw_options(Session& session,bool focus=false) {
 
     section("Judgment counter");
     changed|=ImGui::Checkbox(i18n::label("Always show judgment counter"),&value.always_show_judgment_counter);
+    ImGui::TextUnformatted(i18n::text("Size"));
+    constexpr std::pair<const char*,JudgmentCounterSize> counter_sizes[]{
+        {"Default",JudgmentCounterSize::Default},{"Large",JudgmentCounterSize::Large},{"Extra large",JudgmentCounterSize::ExtraLarge}};
+    for(const auto& [label,size]:counter_sizes) {
+        if(size!=JudgmentCounterSize::Default) ImGui::SameLine();
+        const bool selected=value.judgment_counter_size==size;
+        if(ImGui::RadioButton(i18n::label(label),selected) && !selected) {
+            value.judgment_counter_size=size;
+            changed=true;
+        }
+    }
 
     section("Keyboard shortcut");
     ImGui::TextUnformatted(i18n::text("Overlay hotkey"));
@@ -965,6 +976,10 @@ void draw_finish(Session& session,const State& s) {
     ImGui::PopStyleColor(4);
     ImGui::EndDisabled();
 }
+float judgment_counter_content_height(float line_height) {
+    const auto& style=ImGui::GetStyle();
+    return 2*(line_height+2*style.CellPadding.y)+style.ItemSpacing.y+line_height;
+}
 }
 void draw_panel(Session& session) {
     if (!visible) return;
@@ -974,8 +989,8 @@ void draw_panel(Session& session) {
     const auto s=session.snapshot();
     const auto display=ImGui::GetIO().DisplaySize;
     const auto& style=ImGui::GetStyle();
-    const float initial_top=16.f+2*(ImGui::GetTextLineHeight()+2*style.CellPadding.y)+
-        ImGui::GetTextLineHeightWithSpacing()+2*style.WindowPadding.y+style.ItemSpacing.y+8.f;
+    const float counter_line_height=std::ceil(ImGui::GetTextLineHeight()*static_cast<int>(options.judgment_counter_size)/100.f);
+    const float initial_top=16.f+judgment_counter_content_height(counter_line_height)+2*style.WindowPadding.y+8.f;
     ImGui::SetNextWindowSize({std::min(1180.f,display.x-32.f),std::max(400.f,std::min(680.f,display.y-initial_top-16.f))},ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowPos({16,initial_top},ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSizeConstraints({780,400},{10000,10000});
@@ -1025,26 +1040,59 @@ void draw_panel(Session& session) {
     draw_options(session,focus_options);
 }
 void draw_judgment_counter(const State& state) {
-    if(!state.playing || (!visible.load() && !preferences().snapshot().always_show_judgment_counter)) return;
+    const auto options=preferences().snapshot();
+    const bool overlay_visible=visible.load();
+    if(!state.playing || (!overlay_visible && !options.always_show_judgment_counter)) return;
     const auto stats=judgment::snapshot();
     const auto display=ImGui::GetIO().DisplaySize;
-    const float column=std::max(62.f,ImGui::CalcTextSize("S-CRITICAL").x+2*ImGui::GetStyle().CellPadding.x);
+    const auto& style=ImGui::GetStyle();
+    const float scale=static_cast<int>(options.judgment_counter_size)/100.f;
+    ImGui::PushFont(nullptr,style.FontSizeBase*scale);
+
+    constexpr auto window_name="##judgment-counter";
+    constexpr auto early_label="(-) EARLY",late_label="LATE (+)",average_label="Avg. ";
+    const auto* unavailable=i18n::text("Judgment counter unavailable");
+    char signed_average[32],magnitude[32];
+    sprintf_s(signed_average,"%+.1f",stats.average_ms);
+    sprintf_s(magnitude," ± %.1f ms",stats.absolute_average_ms);
+    const float average_width=ImGui::CalcTextSize(average_label).x+ImGui::CalcTextSize(signed_average).x+ImGui::CalcTextSize(magnitude).x;
+    const float late_width=ImGui::CalcTextSize(late_label).x;
+    const float footer_width=average_width+2*(std::max(ImGui::CalcTextSize(early_label).x,late_width)+style.ItemSpacing.x);
+    const float critical_width=ImGui::CalcTextSize("CRITICAL").x;
+    const float s_critical_width=ImGui::CalcTextSize("S-CRITICAL").x;
+    const int columns=stats.s_critical_enabled?7:5;
+    const float column_width=std::max(62.f*scale,critical_width+2*style.CellPadding.x+1);
+    const float table_width=7*column_width+s_critical_width-critical_width;
+    const float content_width=std::max(table_width,stats.available?footer_width:ImGui::CalcTextSize(unavailable).x);
+    const float line_height=ImGui::GetTextLineHeight();
+    const float content_height=stats.available?judgment_counter_content_height(line_height):line_height;
+    const ImVec2 size{std::ceil(content_width+2*style.WindowPadding.x),std::ceil(content_height+2*style.WindowPadding.y+1)};
     ImGui::SetNextWindowPos({display.x*.5f,16.f},ImGuiCond_FirstUseEver,{.5f,0.f});
-    ImGui::SetNextWindowSize({column*7+ImGui::GetStyle().WindowPadding.x*2,0},ImGuiCond_Always);
-    ImGui::SetNextWindowBgAlpha(preferences().snapshot().background_opacity);
-    const auto flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_AlwaysAutoResize|
-        ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoCollapse|(!visible.load()?ImGuiWindowFlags_NoInputs:0);
-    if(ImGui::Begin("##judgment-counter",nullptr,flags)) {
-        if(!stats.available) ImGui::TextDisabled("%s",i18n::text("Judgment counter unavailable"));
+    ImGui::SetNextWindowSize(size);
+    if(const auto* window=ImGui::FindWindowByName(window_name)) {
+        // A larger font can grow the window. Keep its text inside the canvas when there is room.
+        ImVec2 pos=window->Pos;
+        if(size.x>window->Size.x) pos.x=std::clamp(pos.x,0.f,std::max(0.f,display.x-size.x));
+        if(size.y>window->Size.y) pos.y=std::clamp(pos.y,0.f,std::max(0.f,display.y-size.y));
+        if(pos.x!=window->Pos.x || pos.y!=window->Pos.y) ImGui::SetNextWindowPos(pos);
+    }
+    ImGui::SetNextWindowBgAlpha(options.background_opacity);
+    const auto flags=ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoCollapse|
+        ImGuiWindowFlags_NoResize|(overlay_visible?0:ImGuiWindowFlags_NoInputs);
+    if(ImGui::Begin(window_name,nullptr,flags)) {
+        if(!stats.available) ImGui::TextDisabled("%s",unavailable);
         else {
             const char* full_labels[]{"ERROR","NEAR","CRITICAL","S-CRITICAL","CRITICAL","NEAR","ERROR"};
             const char* standard_labels[]{"ERROR","NEAR","CRITICAL","NEAR","ERROR"};
             const auto* labels=stats.s_critical_enabled?full_labels:standard_labels;
-            const int columns=stats.s_critical_enabled?7:5;
             const std::uint64_t standard_counts[]{stats.counts[0],stats.counts[1],
                 stats.counts[2]+stats.counts[3]+stats.counts[4],stats.counts[5],stats.counts[6]};
             const auto* counts=stats.s_critical_enabled?stats.counts.data():standard_counts;
             if(ImGui::BeginTable("##judgments",columns,ImGuiTableFlags_Borders|ImGuiTableFlags_SizingStretchSame)) {
+                for(int i=0;i<columns;++i) {
+                    const bool s_critical=stats.s_critical_enabled && i==columns/2;
+                    ImGui::TableSetupColumn(nullptr,ImGuiTableColumnFlags_WidthStretch,s_critical?s_critical_width:critical_width);
+                }
                 ImGui::TableNextRow();
                 for(int i=0;i<columns;++i) {
                     ImGui::TableNextColumn();
@@ -1061,25 +1109,23 @@ void draw_judgment_counter(const State& state) {
                 ImGui::EndTable();
             }
             const auto available=ImGui::GetContentRegionAvail().x;
+            const auto left=ImGui::GetCursorPosX();
             constexpr ImVec4 red{1.f,.42f,.58f,1.f},blue{.33f,.70f,1.f,1.f};
             const auto early=stats.colors_swapped?blue:red,late=stats.colors_swapped?red:blue;
             const auto average_color=stats.average_ms<0?early:stats.average_ms>0?late:ImGui::GetStyleColorVec4(ImGuiCol_Text);
-            char avg[64],signed_average[32],magnitude[32];
-            sprintf_s(avg,"Avg. %+.1f ± %.1f ms",stats.average_ms,stats.absolute_average_ms);
-            sprintf_s(signed_average,"%+.1f",stats.average_ms);
-            sprintf_s(magnitude," ± %.1f ms",stats.absolute_average_ms);
-            ImGui::TextColored(early,"(-) EARLY");
-            ImGui::SameLine(std::max(0.f,(available-ImGui::CalcTextSize(avg).x)*.5f));
+            ImGui::TextColored(early,"%s",early_label);
+            ImGui::SameLine(left+(available-average_width)*.5f);
             ImGui::BeginGroup();
-            ImGui::TextUnformatted("Avg. "); ImGui::SameLine(0,0);
+            ImGui::TextUnformatted(average_label); ImGui::SameLine(0,0);
             ImGui::TextColored(average_color,"%s",signed_average); ImGui::SameLine(0,0);
             ImGui::TextUnformatted(magnitude);
             ImGui::EndGroup();
-            ImGui::SameLine(std::max(0.f,available-ImGui::CalcTextSize("LATE (+)").x));
-            ImGui::TextColored(late,"LATE (+)");
+            ImGui::SameLine(left+available-late_width);
+            ImGui::TextColored(late,"%s",late_label);
         }
     }
     ImGui::End();
+    ImGui::PopFont();
 }
 void frame_imgui(Session& session) {
     std::lock_guard lock(imgui_mutex);
