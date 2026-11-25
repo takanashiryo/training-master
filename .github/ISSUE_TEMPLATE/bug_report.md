@@ -23,4 +23,5 @@ If applicable, add screenshots to help explain your problem.
  - spice2x Version: [e.g. YY-MM-DD]
 
 **Attach your logs**
-Add `trainingmaster.log`, spice2x's `log.txt`.
+- `trainingmaster.log` with debug flag
+- spice2x's `log.txt`
