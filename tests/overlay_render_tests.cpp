@@ -38,6 +38,19 @@ void pass(IDirect3DDevice9* device) {
     require(device->EndScene(),"EndScene failed");
 }
 int frame_count() { return ImGui::GetCurrentContext()?ImGui::GetFrameCount():0; }
+bool probe_has_empty_client{};
+LRESULT CALLBACK empty_client_probe_proc(HWND window,UINT message,WPARAM wparam,LPARAM lparam) {
+    if (message==WM_NCCALCSIZE) {
+        auto* client=wparam?&reinterpret_cast<NCCALCSIZE_PARAMS*>(lparam)->rgrc[0]:reinterpret_cast<RECT*>(lparam);
+        client->bottom=client->top;
+        return 0;
+    }
+    if (message==WM_CREATE) {
+        RECT client{};
+        probe_has_empty_client=GetClientRect(window,&client) && client.bottom==client.top;
+    }
+    return DefWindowProcW(window,message,wparam,lparam);
+}
 unsigned game_moves{},game_cursor_messages{};
 unsigned game_button_ups{};
 unsigned game_raw_mouse{},game_raw_keyboard{};
@@ -150,6 +163,19 @@ HRESULT WINAPI end_scene_probe(IDirect3DDevice9* device) {
 int main(int argc,char** argv) {
     try {
         const std::string mode=argc>3?argv[3]:"present";
+        if (mode=="probe-empty-client") {
+            WNDCLASSW probe{}; probe.hInstance=GetModuleHandleW(nullptr);
+            probe.lpfnWndProc=empty_client_probe_proc; probe.lpszClassName=L"SDVXTrainingProbe";
+            if (!RegisterClassW(&probe)) throw std::runtime_error("probe fixture registration failed");
+            if (MH_Initialize()!=MH_OK) throw std::runtime_error("MinHook init failed");
+            training::Session session; std::string reason;
+            const bool installed=training::install_overlay(session,reason);
+            MH_Uninitialize();
+            UnregisterClassW(probe.lpszClassName,probe.hInstance);
+            if (!probe_has_empty_client) throw std::runtime_error("probe fixture must create a zero-height client area");
+            if (!installed) throw std::runtime_error(reason);
+            return 0;
+        }
         const bool windowed=mode.starts_with("windowed");
         const bool ansi_touch=mode=="windowed-ansi-touch";
         const bool direct_touch=ansi_touch || mode=="windowed-unicode-touch";

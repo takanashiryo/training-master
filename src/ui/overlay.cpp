@@ -1221,6 +1221,8 @@ bool install_overlay(Session& session,std::string& reason) {
     }
     IDirect3D9Ex* api{}; IDirect3DDevice9Ex* device{};
     D3DPRESENT_PARAMETERS pp{}; pp.Windowed=TRUE; pp.SwapEffect=D3DSWAPEFFECT_DISCARD;
+    // At high DPI the hidden probe window can have a zero-height client area.
+    pp.BackBufferWidth=64; pp.BackBufferHeight=64;
     pp.hDeviceWindow=window; pp.BackBufferFormat=D3DFMT_UNKNOWN;
     HRESULT hr=Direct3DCreate9Ex(D3D_SDK_VERSION,&api);
     debug_log("D3D9 probe Direct3DCreate9Ex; HRESULT=0x%08lX",static_cast<unsigned long>(hr));
